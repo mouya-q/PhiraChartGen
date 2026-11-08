@@ -14,7 +14,11 @@
 | Gradle | 9.6.0 |
 | Android Gradle 插件 | 9.5.0 |
 | Kotlin | 2.4.20 |
-| compileSdk / targetSdk / minSdk | 36 / 36 / 26 |
+| compileSdk / targetSdk / minSdk | 37 / 36 / 26 |
+
+`compileSdk` 取 37 而不是 36, 是因为 Miuix 0.9.4 的 AAR metadata 要求使用方至少编译到
+`android-37`; 否则 `:app:checkDebugAarMetadata` 会直接失败. `targetSdk` 仍保持 36, 两者可以
+独立升级.
 
 AGP 9 起 Kotlin 支持内置, `:app` 模块**不再**应用 `org.jetbrains.kotlin.android`;
 若在构建输出里看到

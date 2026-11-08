@@ -246,7 +246,8 @@ fun ResultScreen(
                         Txt("导出格式", Modifier.padding(start = 16.dp, top = 10.dp), MiuixTheme.textStyles.body1)
                         Segmented(
                             listOf(ChartFormat.RPE to "RPE", ChartFormat.OFFICIAL to "官方", ChartFormat.PEC to "PEC"),
-                            st.settings.format, onFormat,
+                            selected = st.settings.format,
+                            onSelect = onFormat,
                         )
                         Summary("导出的谱面包可直接在 Phira 中导入", Modifier.padding(start = 16.dp, bottom = 8.dp))
                     }

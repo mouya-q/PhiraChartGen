@@ -164,7 +164,7 @@ fun PSliderRow(title: String, valueText: String, value: Float, range: ClosedFloa
 }
 
 @Composable
-fun PField(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, secret: Boolean = false) {
+fun PField(label: String, value: String, modifier: Modifier = Modifier, secret: Boolean = false, onChange: (String) -> Unit) {
     TextField(
         value = value,
         onValueChange = onChange,
@@ -188,7 +188,7 @@ fun Section(title: String, content: @Composable () -> Unit) {
 
 /** 分段选择, 用于主题, 格式等少量互斥选项 */
 @Composable
-fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
+fun <T> Segmented(options: List<Pair<T, String>>, selected: T, modifier: Modifier = Modifier, onSelect: (T) -> Unit) {
     Row(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for ((value, label) in options) {
             PButton(label, { onSelect(value) }, Modifier.weight(1f), primary = value == selected)

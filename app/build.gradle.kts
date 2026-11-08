@@ -13,7 +13,8 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.phiragen.app"
-    compileSdk = 36
+    // Miuix 0.9.4 的 AAR metadata 要求使用方至少编译到 android-37
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.phiragen.chartgen"

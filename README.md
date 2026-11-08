@@ -30,7 +30,7 @@
 | Android Gradle 插件 | 9.5.0 | 9.0 起 Kotlin 支持内置, `:app` 不再应用 `kotlin-android` |
 | Kotlin | 2.4.20 | 用于 `:core` 的 JVM 与序列化插件 |
 | JDK | 17 | |
-| compileSdk / targetSdk / minSdk | 36 / 36 / 26 | |
+| compileSdk / targetSdk / minSdk | 37 / 36 / 26 | compileSdk 由 Miuix 0.9.4 的 AAR metadata 下限决定 |
 | Compose Multiplatform | 1.12.0 | Miuix 0.9.4 的编译基线 |
 | Miuix | 0.9.4 | 仅 `:app` 使用, 经 `ui/Kit.kt` 单文件封装 |
 

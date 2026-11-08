@@ -77,7 +77,7 @@ fun SettingsScreen(
                 }
                 PField("接口地址", s.ai.baseUrl) { v -> onChange { it.copy(ai = it.ai.copy(baseUrl = v)) } }
                 PField("模型名称", s.ai.model) { v -> onChange { it.copy(ai = it.ai.copy(model = v)) } }
-                PField("接口密钥", s.ai.apiKey, { v -> onChange { it.copy(ai = it.ai.copy(apiKey = v.trim())) } }, secret = true)
+                PField("接口密钥", s.ai.apiKey, secret = true) { v -> onChange { it.copy(ai = it.ai.copy(apiKey = v.trim())) } }
                 PSliderRow(
                     "请求超时", "${s.ai.timeoutSec} 秒", s.ai.timeoutSec.toFloat(), 5f..60f,
                     { v -> onChange { it.copy(ai = it.ai.copy(timeoutSec = v.toInt())) } },
