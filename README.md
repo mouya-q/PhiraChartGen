@@ -40,6 +40,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [docs/BUILD.md](docs/BUILD.md) | 构建指南与云端 CI 说明 |
+| [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md) | 构建与验证状态, 含 CI 运行记录 |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 用户手册 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构说明与决策记录 |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Phira 兼容性验证方法与状态 |

@@ -89,12 +89,17 @@ keyPassword=...
 工作流使用 `gradle/actions/setup-gradle` 指定 Gradle 9.6.0, 不依赖 wrapper jar, JDK 固定 17
 (与上表的工具链基线一致).
 
-两个曾在同类项目里踩到的 CI 坑, 本工作流已经绕开:
+本仓库在搭建云端构建时实际踩到过四个坑, 现均已修复:
 
 - `android-actions/setup-android@v3` 默认会安装已下架的 `tools` 包, cmdline-tools 16.x 起
   `sdkmanager` 直接以 1 退出, 整个 job 在构建前就失败. 工作流只请求 `packages: 'platform-tools'`.
 - `sdkmanager "platforms;android-36"` 之类的精确包名不一定存在; SDK 平台通常由 runner 镜像
   预装, 因此工作流打印已装包清单, 而不是尝试安装.
+- `:app:checkDebugAarMetadata` 曾报 18 项 AAR metadata 问题: Miuix 0.9.4 要求使用方编译到
+  `android-37` 或更高, 而 `compileSdk` 当时是 36. 现已改为 37.
+- `compileDebugKotlin` 曾报 `No value passed for parameter 'onSelect'`. 原因是 `Kit.kt` 里
+  `Segmented` / `PField` 把回调参数排在 `modifier`、`secret` 之前, 尾随 lambda 被绑定到
+  最后一个参数上, 类型对不上. 现已把回调统一放到参数列表末尾, 尾随 lambda 写法恢复正确.
 
 ## 常见构建问题
 
