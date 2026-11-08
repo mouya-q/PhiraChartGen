@@ -63,7 +63,13 @@ private fun evalSegs(segs: List<LineMotion.Seg>, beat: Double, initial: Double):
 }
 
 @Composable
-fun PreviewScreen(st: UiState, index: Int, dark: Boolean, onBack: () -> Unit) {
+fun PreviewScreen(
+    st: UiState,
+    index: Int,
+    dark: Boolean,
+    onBack: () -> Unit,
+    playbackEnabled: Boolean = true,
+) {
     val chart = st.charts.getOrNull(index)
     val audio = st.audio
     val context = LocalContext.current
@@ -73,34 +79,43 @@ fun PreviewScreen(st: UiState, index: Int, dark: Boolean, onBack: () -> Unit) {
     var pos by remember { mutableDoubleStateOf(0.0) }
     val total = max(1.0, (audio?.durationMs ?: 0L) / 1000.0)
 
-    DisposableEffect(audio?.uri) {
-        val mp = MediaPlayer()
-        try {
-            mp.setDataSource(context, audio!!.uri)
-            mp.prepare()
-            player = mp
-        } catch (e: Exception) {
-            failed = true
+    if (playbackEnabled) {
+        DisposableEffect(audio?.uri) {
+            val mp = MediaPlayer()
+            try {
+                mp.setDataSource(context, audio!!.uri)
+                mp.prepare()
+                player = mp
+            } catch (_: Exception) {
+                failed = true
+            }
+            onDispose {
+                try { mp.release() } catch (_: Exception) {}
+                player = null
+            }
         }
-        onDispose {
-            try { mp.release() } catch (_: Exception) {}
-            player = null
+        LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
+            player?.takeIf { it.isPlaying }?.pause()
+            playing = false
         }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
-        player?.takeIf { it.isPlaying }?.pause()
-        playing = false
-    }
-    LaunchedEffect(playing, player) {
+    LaunchedEffect(playing, player, playbackEnabled) {
         val mp = player ?: return@LaunchedEffect
+        if (!playbackEnabled) {
+            if (mp.isPlaying) mp.pause()
+            playing = false
+            return@LaunchedEffect
+        }
         if (playing) {
             mp.start()
-            while (playing) {
+            while (playing && playbackEnabled) {
                 withFrameNanos { }
                 pos = mp.currentPosition / 1000.0
-                if (!mp.isPlaying) { playing = false }
+                if (!mp.isPlaying) playing = false
             }
-        } else if (mp.isPlaying) mp.pause()
+        } else if (mp.isPlaying) {
+            mp.pause()
+        }
     }
 
     PScaffold(topBar = { PTopBar("谱面预览", onBack) }) { pad ->
@@ -108,7 +123,12 @@ fun PreviewScreen(st: UiState, index: Int, dark: Boolean, onBack: () -> Unit) {
             Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) { Summary("谱面不存在") }
             return@PScaffold
         }
-        Column(Modifier.fillMaxSize().padding(pad).padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(Modifier.fillMaxSize()) {
+            PageBackground(dark)
+            Column(
+                Modifier.fillMaxSize().padding(pad).padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Txt(chart.levelText, Modifier.weight(1f), MiuixTheme.textStyles.title3, diffColor(chart.profile.difficulty))
                 Summary("${chart.notes.count { it.time <= pos }} / ${chart.noteCount}")
@@ -133,6 +153,7 @@ fun PreviewScreen(st: UiState, index: Int, dark: Boolean, onBack: () -> Unit) {
                 PButton("回到开头", { pos = 0.0; player?.seekTo(0) }, Modifier.weight(1f), primary = false)
             }
             Summary("预览按谱面的实际时间与判定线运动绘制, 不含打击音效")
+            }
         }
     }
 }

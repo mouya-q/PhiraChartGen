@@ -65,6 +65,7 @@ dependencies {
     implementation(project(":core"))
     implementation(libs.compose.runtime)
     implementation(libs.compose.foundation)
+    implementation(libs.compose.animation)
     implementation(libs.compose.ui)
     implementation(libs.miuix.ui)
     implementation(libs.androidx.activity.compose)

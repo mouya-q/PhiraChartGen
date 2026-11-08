@@ -1,6 +1,8 @@
 package com.phiragen.app.ui
 
+import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +30,7 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(
     st: UiState,
+    dark: Boolean,
     onBack: () -> Unit,
     onChange: ((AppSettings) -> AppSettings) -> Unit,
     onTestAi: () -> Unit,
@@ -41,10 +44,21 @@ fun SettingsScreen(
     var clearDialog by remember { mutableStateOf(false) }
 
     PScaffold(topBar = { PTopBar("设置", onBack) }) { pad ->
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(pad).padding(bottom = 32.dp)) {
+        Box(Modifier.fillMaxSize()) {
+            PageBackground(dark)
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(pad).padding(bottom = 32.dp)) {
             Section("外观") {
                 Segmented(ThemeMode.values().map { it to it.label }, s.theme) { v -> onChange { it.copy(theme = v) } }
-                PSwitchRow("玻璃模糊", "使用封面的高斯模糊作为背景, 低于 Android 12 时仅压暗显示", s.blurEnabled) { v -> onChange { it.copy(blurEnabled = v) } }
+                SettingsDivider()
+                PSwitchRow(
+                    "转场模糊",
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        "页面切换时使用柔和的背景高斯模糊"
+                    } else {
+                        "当前系统版本不支持背景高斯模糊, 页面切换动画仍可正常使用"
+                    },
+                    s.transitionBlurEnabled,
+                ) { v -> onChange { it.copy(transitionBlurEnabled = v) } }
             }
 
             Section("谱面") {
@@ -53,16 +67,19 @@ fun SettingsScreen(
                     { v -> onChange { it.copy(noteSpeed = Math.round(v * 2f) / 2f) } },
                     "数值越大音符下落越快, 默认 10",
                 )
+                SettingsDivider()
                 PSliderRow(
                     "网格吸附", if (s.snapToleranceMs == 0) "关闭" else "${s.snapToleranceMs} 毫秒", s.snapToleranceMs.toFloat(), 0f..80f,
                     { v -> onChange { it.copy(snapToleranceMs = v.toInt()) } },
                     "音符靠近节拍网格时对齐, 现场演奏的曲目可调小或关闭",
                 )
+                SettingsDivider()
                 PSliderRow(
                     "谱面延迟", "${s.offsetMs} 毫秒", s.offsetMs.toFloat(), -300f..300f,
                     { v -> onChange { it.copy(offsetMs = v.toInt()) } },
                     "正值表示谱面更晚开始, 用于校准 MP3 等格式的解码延迟",
                 )
+                SettingsDivider()
                 PField("谱师署名", s.charter) { v -> onChange { it.copy(charter = v.take(40)) } }
                 Spacer(Modifier.height(6.dp))
             }
@@ -75,13 +92,18 @@ fun SettingsScreen(
                     if (v && !s.ai.consented) consentDialog = true
                     else onChange { it.copy(ai = it.ai.copy(enabled = v)) }
                 }
+                SettingsDivider()
                 PField("接口地址", s.ai.baseUrl) { v -> onChange { it.copy(ai = it.ai.copy(baseUrl = v)) } }
+                SettingsDivider()
                 PField("模型名称", s.ai.model) { v -> onChange { it.copy(ai = it.ai.copy(model = v)) } }
+                SettingsDivider()
                 PField("接口密钥", s.ai.apiKey, secret = true) { v -> onChange { it.copy(ai = it.ai.copy(apiKey = v.trim())) } }
+                SettingsDivider()
                 PSliderRow(
                     "请求超时", "${s.ai.timeoutSec} 秒", s.ai.timeoutSec.toFloat(), 5f..60f,
                     { v -> onChange { it.copy(ai = it.ai.copy(timeoutSec = v.toInt())) } },
                 )
+                SettingsDivider()
                 PSliderRow(
                     "失败重试", "${s.ai.retries} 次", s.ai.retries.toFloat(), 0f..4f,
                     { v -> onChange { it.copy(ai = it.ai.copy(retries = v.toInt())) } },
@@ -119,6 +141,7 @@ fun SettingsScreen(
 
             Section("关于") {
                 PSwitchRowLike("关于与声明", "版本, 隐私, 免责声明, 开源许可", onAbout)
+            }
             }
         }
     }

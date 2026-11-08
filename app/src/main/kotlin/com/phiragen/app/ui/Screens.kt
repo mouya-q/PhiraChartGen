@@ -17,24 +17,23 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.phiragen.app.Screen
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import com.phiragen.app.UiState
 import com.phiragen.core.ai.AiOutcome
 import com.phiragen.core.chart.Chart
 import com.phiragen.core.chart.ChartFormat
 import com.phiragen.core.chart.Difficulty
 import com.phiragen.core.chart.NoteType
-import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.util.Locale
@@ -54,8 +53,6 @@ fun fmtTime(sec: Double): String {
 fun fmtSize(bytes: Long): String =
     if (bytes <= 0) "" else String.format(Locale.ROOT, "%.1f MB", bytes / 1048576.0)
 
-// ============================================================ 首页
-
 @Composable
 fun HomeScreen(
     st: UiState,
@@ -69,54 +66,86 @@ fun HomeScreen(
     onSettings: () -> Unit,
 ) {
     val cover = remember(st.audio?.cover) { st.audio?.cover?.asImageBitmap() }
-    PScaffold(
-        topBar = { PTopBar("Phira 谱面生成器", actions = { PTextButton("设置", onSettings) }) },
-    ) { pad ->
+    PScaffold(topBar = {}) { pad ->
         Box(Modifier.fillMaxSize()) {
-            GlassBackdrop(cover, st.settings.blurEnabled, dark)
+            PageBackground(dark)
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(pad).padding(horizontal = 14.dp, vertical = 8.dp),
+                Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                PageTitle(
+                    title = "Phira 谱面生成器",
+                    subtitle = "本地音频分析与谱面生成",
+                    action = { PTextButton("设置", onSettings) },
+                )
+
                 val audio = st.audio
                 if (audio == null) {
                     EmptyHome(st, dark, onPick, onResume)
                 } else {
-                    GlassCard(dark, Modifier.fillMaxWidth()) {
-                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(72.dp).clip(RoundedCornerShape(14.dp)).background(MiuixTheme.colorScheme.primary.copy(alpha = 0.2f))) {
-                                if (cover != null) Image(cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                else Txt("♪", Modifier.align(Alignment.Center), MiuixTheme.textStyles.title1, MiuixTheme.colorScheme.primary)
+                    SurfaceCard(dark, Modifier.fillMaxWidth()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(17.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier.size(68.dp).clip(RoundedCornerShape(16.dp))
+                                    .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.10f)),
+                            ) {
+                                if (cover != null) {
+                                    Image(cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                } else {
+                                    Txt("♪", Modifier.align(Alignment.Center), MiuixTheme.textStyles.title1, MiuixTheme.colorScheme.primary)
+                                }
                             }
                             Spacer(Modifier.width(14.dp))
-                            Column(Modifier.weight(1f)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Txt(audio.title, style = MiuixTheme.textStyles.title3)
                                 if (audio.artist.isNotEmpty()) Summary(audio.artist)
-                                Summary(listOf(fmtTime(audio.durationMs / 1000.0), audio.extension.uppercase(), fmtSize(audio.sizeBytes)).filter { it.isNotEmpty() }.joinToString("  ·  "))
+                                Summary(
+                                    listOf(
+                                        fmtTime(audio.durationMs / 1000.0),
+                                        audio.extension.uppercase(),
+                                        fmtSize(audio.sizeBytes),
+                                    ).filter { it.isNotEmpty() }.joinToString("  ·  "),
+                                )
                             }
                             PTextButton("移除", onClear)
                         }
                     }
-                    GlassCard(dark, Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Txt("难度", style = MiuixTheme.textStyles.body1)
+
+                    SurfaceCard(dark, Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Txt("难度", style = MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.SemiBold))
                             Summary("可多选, 每个难度生成一个独立谱面")
-                            Spacer(Modifier.height(10.dp))
+                            Spacer(Modifier.height(5.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                for (d in Difficulty.values()) {
-                                    Chip(d.key, diffColor(d), d in st.settings.difficulties, { onToggle(d) }, Modifier.weight(1f))
+                                Difficulty.values().forEach { difficulty ->
+                                    Chip(
+                                        difficulty.key,
+                                        diffColor(difficulty),
+                                        difficulty in st.settings.difficulties,
+                                        { onToggle(difficulty) },
+                                        Modifier.weight(1f),
+                                    )
                                 }
                             }
                             if (st.settings.difficulties.isEmpty()) {
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(4.dp))
                                 Banner("请至少选择一个难度", Palette.warn)
                             }
                         }
                     }
-                    GlassCard(dark, Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(vertical = 6.dp)) {
-                            Txt("谱面格式", Modifier.padding(start = 16.dp, top = 10.dp), MiuixTheme.textStyles.body1)
-                            Summary("推荐 RPE, 兼容性最好", Modifier.padding(start = 16.dp))
+
+                    SurfaceCard(dark, Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(top = 15.dp, bottom = 5.dp)) {
+                            Txt(
+                                "谱面格式",
+                                Modifier.padding(horizontal = 18.dp),
+                                MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.SemiBold),
+                            )
+                            Summary("推荐 RPE, 兼容性较好", Modifier.padding(horizontal = 18.dp, vertical = 3.dp))
                             Segmented(
                                 listOf(ChartFormat.RPE to "RPE", ChartFormat.OFFICIAL to "官方", ChartFormat.PEC to "PEC"),
                                 selected = st.settings.format,
@@ -124,15 +153,25 @@ fun HomeScreen(
                             )
                         }
                     }
-                    if (st.settings.ai.ready) Banner("AI 增强已开启, 生成时会上传分段统计数据 (不含音频)", Palette.hd)
-                    PButton("开始生成", onGenerate, Modifier.fillMaxWidth().height(52.dp), enabled = st.settings.difficulties.isNotEmpty())
-                    PButton("换一首", onPick, Modifier.fillMaxWidth(), primary = false)
+
+                    if (st.settings.ai.ready) {
+                        Banner("AI 增强已开启, 生成时会上传分段统计数据 (不含音频)", Palette.hd)
+                    }
+
+                    PButton(
+                        "开始生成",
+                        onGenerate,
+                        Modifier.fillMaxWidth().height(54.dp),
+                        enabled = st.settings.difficulties.isNotEmpty() && !st.loadingAudio,
+                    )
+                    PButton("更换歌曲", onPick, Modifier.fillMaxWidth().height(48.dp), primary = false)
                 }
+
                 if (st.loadingAudio) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Summary("正在读取音频信息")
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(22.dp))
             }
         }
     }
@@ -140,24 +179,32 @@ fun HomeScreen(
 
 @Composable
 private fun EmptyHome(st: UiState, dark: Boolean, onPick: () -> Unit, onResume: () -> Unit) {
-    Spacer(Modifier.height(36.dp))
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier.size(96.dp).clip(RoundedCornerShape(28.dp)).background(MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
-        ) { Txt("♪", style = MiuixTheme.textStyles.title1, color = MiuixTheme.colorScheme.primary) }
-        Spacer(Modifier.height(18.dp))
-        Txt("导入音频开始制谱", style = MiuixTheme.textStyles.title3)
-        Spacer(Modifier.height(6.dp))
-        Summary("支持 MP3, FLAC, OGG, WAV, M4A 等系统可解码的格式")
-        Summary("音频只在本机处理, 不会被上传")
+    Spacer(Modifier.height(22.dp))
+    SurfaceCard(dark, Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 30.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Box(
+                Modifier.size(76.dp).clip(RoundedCornerShape(24.dp))
+                    .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.10f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Txt("♪", style = MiuixTheme.textStyles.title1, color = MiuixTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(3.dp))
+            Txt("导入音频开始制谱", style = MiuixTheme.textStyles.title3)
+            Summary("支持 MP3, FLAC, OGG, WAV, M4A 等系统可解码格式", align = TextAlign.Center)
+            Summary("音频只在本机处理, 不会被上传", align = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            PButton("选择音频文件", onPick, Modifier.fillMaxWidth().height(52.dp))
+        }
     }
-    Spacer(Modifier.height(12.dp))
-    PButton("选择音频文件", onPick, Modifier.fillMaxWidth().height(52.dp))
     if (st.hasSession) {
-        GlassCard(dark, Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
+        SurfaceCard(dark, Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(17.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Txt("继续上次的曲目", style = MiuixTheme.textStyles.body1)
                     Summary("复用已保存的分析, 无需重新解码")
                 }
@@ -167,35 +214,48 @@ private fun EmptyHome(st: UiState, dark: Boolean, onPick: () -> Unit, onResume: 
     }
 }
 
-// ============================================================ 处理中
-
 @Composable
 fun WorkingScreen(st: UiState, dark: Boolean, onCancel: () -> Unit, onRetry: () -> Unit, onBack: () -> Unit) {
     PScaffold(topBar = { PTopBar("正在生成") }) { pad ->
         Box(Modifier.fillMaxSize()) {
-            GlassBackdrop(st.audio?.cover?.asImageBitmap(), st.settings.blurEnabled, dark)
-            Column(Modifier.fillMaxSize().padding(pad).padding(20.dp), verticalArrangement = Arrangement.Center) {
-                GlassCard(dark, Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            PageBackground(dark)
+            Column(
+                Modifier.fillMaxSize().padding(pad).padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                SurfaceCard(dark, Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(21.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
                         if (st.error != null) {
                             Txt("处理失败", style = MiuixTheme.textStyles.title3, color = Palette.bad)
-                            Spacer(Modifier.height(8.dp))
                             Txt(st.error, align = TextAlign.Center)
-                            Spacer(Modifier.height(18.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 PButton("返回", onBack, Modifier.weight(1f), primary = false)
                                 PButton("重试", onRetry, Modifier.weight(1f))
                             }
                         } else {
-                            Txt(st.stage, style = MiuixTheme.textStyles.title3)
-                            Spacer(Modifier.height(4.dp))
+                            Box(
+                                Modifier.size(54.dp).clip(RoundedCornerShape(18.dp))
+                                    .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.10f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Txt("♪", style = MiuixTheme.textStyles.title2, color = MiuixTheme.colorScheme.primary)
+                            }
+                            Txt(st.stage.ifBlank { "准备生成" }, style = MiuixTheme.textStyles.title3)
                             Summary(st.audio?.title ?: "")
-                            Spacer(Modifier.height(18.dp))
-                            LinearProgressIndicator(progress = st.progress.coerceIn(0f, 1f), modifier = Modifier.fillMaxWidth())
-                            Spacer(Modifier.height(8.dp))
-                            Summary("${(st.progress * 100).toInt()}%")
-                            Spacer(Modifier.height(18.dp))
-                            PButton("取消", onCancel, Modifier.fillMaxWidth(), primary = false)
+                            Spacer(Modifier.height(2.dp))
+                            LinearProgressIndicator(
+                                progress = st.progress.coerceIn(0f, 1f),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Summary("处理进度")
+                                Txt("${(st.progress * 100).toInt()}%", color = MiuixTheme.colorScheme.primary)
+                            }
+                            PButton("取消生成", onCancel, Modifier.fillMaxWidth(), primary = false)
                         }
                     }
                 }
@@ -203,8 +263,6 @@ fun WorkingScreen(st: UiState, dark: Boolean, onCancel: () -> Unit, onRetry: () 
         }
     }
 }
-
-// ============================================================ 结果
 
 @Composable
 fun ResultScreen(
@@ -219,19 +277,26 @@ fun ResultScreen(
     onFormat: (ChartFormat) -> Unit,
     onSettings: () -> Unit,
 ) {
-    val cover = remember(st.audio?.cover) { st.audio?.cover?.asImageBitmap() }
     PScaffold(topBar = { PTopBar("生成结果", onBack, actions = { PTextButton("设置", onSettings) }) }) { pad ->
         Box(Modifier.fillMaxSize()) {
-            GlassBackdrop(cover, st.settings.blurEnabled, dark)
+            PageBackground(dark)
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(pad).padding(horizontal = 14.dp, vertical = 8.dp),
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(pad)
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                GlassCard(dark, Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
+                SurfaceCard(dark, Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Txt(st.audio?.title ?: "", style = MiuixTheme.textStyles.title3)
-                        Summary(String.format(Locale.ROOT, "%.1f BPM  ·  %s  ·  %d 个谱面", st.bpm, fmtTime(st.durationSec), st.charts.size))
-                        Spacer(Modifier.height(8.dp))
+                        Summary(
+                            String.format(
+                                Locale.ROOT,
+                                "%.1f BPM  ·  %s  ·  %d 个谱面",
+                                st.bpm,
+                                fmtTime(st.durationSec),
+                                st.charts.size,
+                            ),
+                        )
                         when (val ai = st.aiOutcome) {
                             is AiOutcome.Applied -> Banner("已应用 AI 编排建议 (${ai.windowCount} 段)", Palette.ok)
                             is AiOutcome.FellBack -> Banner("AI 增强未生效, 已使用离线结果: ${ai.reason}", Palette.warn)
@@ -242,15 +307,19 @@ fun ResultScreen(
                 st.charts.forEachIndexed { i, chart ->
                     ChartCard(i, chart, st, dark, onPreview, onExport, onShare)
                 }
-                GlassCard(dark, Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(vertical = 6.dp)) {
-                        Txt("导出格式", Modifier.padding(start = 16.dp, top = 10.dp), MiuixTheme.textStyles.body1)
+                SurfaceCard(dark, Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(top = 15.dp, bottom = 5.dp)) {
+                        Txt(
+                            "导出格式",
+                            Modifier.padding(horizontal = 18.dp),
+                            MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.SemiBold),
+                        )
                         Segmented(
                             listOf(ChartFormat.RPE to "RPE", ChartFormat.OFFICIAL to "官方", ChartFormat.PEC to "PEC"),
                             selected = st.settings.format,
                             onSelect = onFormat,
                         )
-                        Summary("导出的谱面包可直接在 Phira 中导入", Modifier.padding(start = 16.dp, bottom = 8.dp))
+                        Summary("导出的谱面包可直接在 Phira 中导入", Modifier.padding(horizontal = 18.dp, vertical = 4.dp))
                     }
                 }
                 PButton("全部导出到文件夹", onExportAll, Modifier.fillMaxWidth().height(52.dp), enabled = !st.busyExport)
@@ -259,7 +328,7 @@ fun ResultScreen(
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Summary("正在打包")
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(22.dp))
             }
         }
     }
@@ -267,32 +336,41 @@ fun ResultScreen(
 
 @Composable
 private fun ChartCard(
-    index: Int, chart: Chart, st: UiState, dark: Boolean,
-    onPreview: (Int) -> Unit, onExport: (Int) -> Unit, onShare: (Int) -> Unit,
+    index: Int,
+    chart: Chart,
+    st: UiState,
+    dark: Boolean,
+    onPreview: (Int) -> Unit,
+    onExport: (Int) -> Unit,
+    onShare: (Int) -> Unit,
 ) {
     val color = diffColor(chart.profile.difficulty)
     val report = st.reports[index]
-    GlassCard(dark, Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
+    SurfaceCard(dark, Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.clip(RoundedCornerShape(10.dp)).background(color).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    Txt(chart.levelText, color = Color.White, style = MiuixTheme.textStyles.body1)
+                Box(
+                    Modifier.clip(RoundedCornerShape(10.dp))
+                        .background(color.copy(alpha = 0.13f))
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                ) {
+                    Txt(chart.levelText, color = color, style = MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.SemiBold))
                 }
                 Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Txt("${chart.noteCount} 个音符", style = MiuixTheme.textStyles.body1)
-                    val nps = chart.noteCount / (chart.durationSec.coerceAtLeast(1.0))
+                    val nps = chart.noteCount / chart.durationSec.coerceAtLeast(1.0)
                     Summary(String.format(Locale.ROOT, "平均 %.1f 个每秒  ·  %d 条判定线", nps, chart.profile.lineCount))
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            val counts = NoteType.values().map { t -> t to chart.notes.count { it.type == t } }.filter { it.second > 0 }
-            Summary(counts.joinToString("   ") { (t, c) -> "${typeName(t)} $c" })
+            val counts = NoteType.values().map { type -> type to chart.notes.count { it.type == type } }
+                .filter { it.second > 0 }
+            Summary(counts.joinToString("   ") { (type, count) -> "${typeName(type)} $count" })
             if (report != null) {
-                Spacer(Modifier.height(8.dp))
                 if (report.ok) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Dot(Palette.ok); Spacer(Modifier.width(6.dp))
+                        Dot(Palette.ok)
+                        Spacer(Modifier.width(7.dp))
                         Summary("兼容性验证通过" + if (report.warnings.isNotEmpty()) " (${report.warnings.size} 条提示)" else "")
                     }
                     report.warnings.take(2).forEach { Summary(it) }
@@ -300,7 +378,6 @@ private fun ChartCard(
                     Banner("验证未通过: " + report.errors.take(2).joinToString("; "), Palette.bad)
                 }
             }
-            Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PButton("预览", { onPreview(index) }, Modifier.weight(1f), primary = false)
                 PButton("导出", { onExport(index) }, Modifier.weight(1f), enabled = !st.busyExport)

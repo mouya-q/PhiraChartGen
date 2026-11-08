@@ -30,6 +30,7 @@ data class AppSettings(
     val offsetMs: Int = 0,
     val charter: String = "PhiraChartGen",
     val blurEnabled: Boolean = true,
+    val transitionBlurEnabled: Boolean = true,
     val ai: AiSettings = AiSettings(),
 )
 
@@ -51,6 +52,7 @@ class SettingsStore(context: Context) {
             offsetMs = sp.getInt("offset", 0).coerceIn(-500, 500),
             charter = sp.getString("charter", "PhiraChartGen")?.take(40) ?: "PhiraChartGen",
             blurEnabled = sp.getBoolean("blur", true),
+            transitionBlurEnabled = sp.getBoolean("transition_blur", true),
             ai = AiSettings(
                 enabled = sp.getBoolean("ai_enabled", false),
                 consented = sp.getBoolean("ai_consent", false),
@@ -73,6 +75,7 @@ class SettingsStore(context: Context) {
             .putInt("offset", s.offsetMs)
             .putString("charter", s.charter)
             .putBoolean("blur", s.blurEnabled)
+            .putBoolean("transition_blur", s.transitionBlurEnabled)
             .putBoolean("ai_enabled", s.ai.enabled)
             .putBoolean("ai_consent", s.ai.consented)
             .putString("ai_url", s.ai.baseUrl)
