@@ -13,15 +13,6 @@
 - 可选 AI 增强: 配置, 连接测试, 超时重试, 失败自动回退
 - Miuix 界面, 深浅色, 玻璃模糊背景
 
-## 项目状态
-
-请先阅读这一节.
-
-- 核心算法已用程序合成的音频在原型中验证过: BPM 与相位恢复准确, 起音时间误差约 1 毫秒, 样例谱面包全部通过 `tools/validate_phira_pack.py`
-- **Kotlin 代码与 APK 尚未在本机编译过**. 本地开发环境没有 Android 工具链, 构建全部交给 `.github/workflows/ci.yml` 的云端任务; 第一次构建可能需要修复少量编译错误, 尤其是 Miuix 组件接口 (已集中在 `app/.../ui/Kit.kt`)
-- **尚未在 Phira 实机验证**. RPE 格式是推荐格式, 官方 JSON 与 PEC 的验证状态见 [docs/VALIDATION.md](docs/VALIDATION.md)
-- 真实音乐上的效果尚未系统评测, 合成音频只能说明算法流程正确
-
 ## 构建配置基线
 
 | 组件 | 版本 | 说明 |
