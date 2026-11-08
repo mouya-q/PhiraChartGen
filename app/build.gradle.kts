@@ -58,9 +58,7 @@ android {
 
 kotlin {
     // 内置 Kotlin 的 jvmTarget 默认取 compileOptions.targetCompatibility, 无需重复声明
-    compilerOptions {
-        freeCompilerArgs.add("-Xjvm-default=all")
-    }
+    // (Kotlin 2.2 起 -Xjvm-default 已弃用, 这里不再传该参数)
 }
 
 dependencies {

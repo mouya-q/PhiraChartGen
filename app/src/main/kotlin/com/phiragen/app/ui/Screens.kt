@@ -119,7 +119,8 @@ fun HomeScreen(
                             Summary("推荐 RPE, 兼容性最好", Modifier.padding(start = 16.dp))
                             Segmented(
                                 listOf(ChartFormat.RPE to "RPE", ChartFormat.OFFICIAL to "官方", ChartFormat.PEC to "PEC"),
-                                st.settings.format, onFormat,
+                                selected = st.settings.format,
+                                onSelect = onFormat,
                             )
                         }
                     }
