@@ -1,0 +1,34 @@
+[versions]
+# AGP 9 起 Kotlin 支持内置: app 模块不再单独应用 KGP, 应用侧 Kotlin 编译器版本
+# 由 AGP 携带的 KGP 决定。本文件中的 kotlin 版本用于 :core 的 JVM 与序列化插件。
+agp = "9.5.0"
+kotlin = "2.4.20"
+# Compose Multiplatform 1.12.0 是 Miuix 0.9.4 的编译基线, 与之对齐可避免运行时版本漂移
+composeMultiplatform = "1.12.0"
+miuix = "0.9.4"
+serialization = "1.9.0"
+coroutines = "1.10.2"
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+coreKtx = "1.19.1"
+junitJupiter = "5.14.0"
+
+[libraries]
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMultiplatform" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMultiplatform" }
+miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junitJupiter" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
