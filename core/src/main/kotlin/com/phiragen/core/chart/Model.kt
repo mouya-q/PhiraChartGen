@@ -9,7 +9,7 @@ data class Note(
     val time: Double,
     val endTime: Double,
     val type: NoteType,
-    /** 相对判定线中心的横向坐标, 单位与 RPE 一致 (屏幕宽 1350) */
+    /** 相对所在判定线中心的横向坐标, 单位与 RPE 一致 (屏幕宽 1350) */
     val x: Double,
     val line: Int,
 )
@@ -27,17 +27,14 @@ data class DifficultyProfile(
     val holdRatio: Double,
     val flickRatio: Double,
     val dragRatio: Double,
-    val lineCount: Int,
-    /** 判定线摆动角度 */
-    val swayDegrees: Double,
     /** 起音检测阈值, 越低候选越多 */
     val peakThreshold: Double,
 ) {
     companion object {
-        val EZ = DifficultyProfile(Difficulty.EZ, 1.4, 0.38, 2, listOf(-360.0, 0.0, 360.0), 0.0, 0.12, 0.0, 0.0, 1, 0.0, 0.14)
-        val HD = DifficultyProfile(Difficulty.HD, 2.6, 0.22, 2, listOf(-420.0, -140.0, 140.0, 420.0), 0.0, 0.15, 0.05, 0.0, 1, 2.5, 0.10)
-        val IN = DifficultyProfile(Difficulty.IN, 4.4, 0.125, 4, listOf(-540.0, -270.0, 0.0, 270.0, 540.0), 0.08, 0.12, 0.07, 0.15, 2, 3.0, 0.07)
-        val AT = DifficultyProfile(Difficulty.AT, 6.4, 0.09, 4, listOf(-540.0, -270.0, 0.0, 270.0, 540.0), 0.15, 0.10, 0.09, 0.25, 2, 5.0, 0.05)
+        val EZ = DifficultyProfile(Difficulty.EZ, 1.5, 0.38, 2, listOf(-270.0, 0.0, 270.0), 0.0, 0.12, 0.0, 0.0, 0.14)
+        val HD = DifficultyProfile(Difficulty.HD, 3.0, 0.22, 2, listOf(-405.0, -135.0, 135.0, 405.0), 0.06, 0.15, 0.05, 0.05, 0.10)
+        val IN = DifficultyProfile(Difficulty.IN, 5.0, 0.125, 4, listOf(-405.0, -202.5, 0.0, 202.5, 405.0), 0.18, 0.14, 0.07, 0.2, 0.07)
+        val AT = DifficultyProfile(Difficulty.AT, 7.5, 0.09, 4, listOf(-405.0, -202.5, 0.0, 202.5, 405.0), 0.30, 0.14, 0.09, 0.3, 0.05)
 
         fun of(d: Difficulty): DifficultyProfile = when (d) {
             Difficulty.EZ -> EZ
@@ -62,8 +59,10 @@ class Chart(
     /** 内部难度数值, 写入 info.yml 的 difficulty */
     val difficultyValue: Double,
     val level: Int,
+    val choreography: Choreography,
     val noteSpeed: Double = DEFAULT_NOTE_SPEED,
 ) {
+    val lineCount: Int get() = choreography.lineCount
     val beatSec: Double get() = 60.0 / bpm
     val levelText: String get() = "${profile.difficulty.key} Lv.$level"
 

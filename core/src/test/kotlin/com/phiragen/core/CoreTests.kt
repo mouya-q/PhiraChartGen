@@ -13,6 +13,7 @@ import com.phiragen.core.audio.Fft
 import com.phiragen.core.audio.StreamResampler
 import com.phiragen.core.chart.ChartFormat
 import com.phiragen.core.chart.ChartGenerator
+import com.phiragen.core.chart.GenerationOptions
 import com.phiragen.core.chart.ChartMeta
 import com.phiragen.core.chart.Difficulty
 import com.phiragen.core.chart.DifficultyProfile
@@ -108,8 +109,8 @@ class GeneratorTest {
             assertTrue(c.notes.isNotEmpty())
             assertTrue(c.notes.zipWithNext().all { (a, b) -> a.time <= b.time })
             assertTrue(c.notes.all { it.time >= 1.0 && it.time <= analysis.durationSec })
-            assertTrue(c.notes.all { it.line in 0 until c.profile.lineCount })
-            assertTrue(c.notes.all { it.x in c.profile.lanes })
+            assertTrue(c.notes.all { it.line in 0 until c.lineCount })
+            assertTrue(c.notes.all { abs(it.x) <= 640.0 })
         }
     }
 
@@ -118,7 +119,7 @@ class GeneratorTest {
         for (d in Difficulty.values()) {
             val c = gen(d)
             val holds = c.notes.filter { it.type == NoteType.HOLD }
-            assertTrue(holds.all { it.endTime - it.time >= 0.4 })
+            assertTrue(holds.all { it.endTime - it.time >= 0.25 - 1e-9 })
             for (h in holds) {
                 val clash = c.notes.any { it !== h && it.x == h.x && it.line == h.line && it.time > h.time && it.time < h.endTime }
                 assertTrue(!clash, "note inside hold lane")
@@ -137,6 +138,87 @@ class GeneratorTest {
     fun beatConversionRoundTrips() {
         val c = gen(Difficulty.HD)
         for (n in c.notes.take(50)) assertEquals(n.time, c.secOf(c.beatOf(n.time)), 1e-9)
+    }
+
+    @Test
+    fun channelsAreContiguousAndCoverTheWholeSong() {
+        for (d in Difficulty.values()) {
+            val c = gen(d)
+            val end = c.choreography.endBeat
+            for (t in c.choreography.tracks) {
+                for (ch in listOf(t.x, t.y, t.rotation, t.alpha)) {
+                    assertTrue(ch.segs.isNotEmpty())
+                    assertEquals(0.0, ch.segs.first().start, 1e-9)
+                    assertEquals(end, ch.segs.last().end, 1e-9)
+                    assertTrue(ch.segs.zipWithNext().all { (a, b) -> abs(a.end - b.start) < 1e-9 && a.end > a.start })
+                    // 数值也必须连续, 否则在三种格式里都会出现瞬移
+                    assertTrue(ch.segs.zipWithNext().all { (a, b) -> abs(a.to - b.from) < 1e-6 })
+                }
+            }
+        }
+    }
+
+    @Test
+    fun notesStayOnScreenWhenTheyReachTheirLine() {
+        for (d in Difficulty.values()) {
+            for (seed in 1L..4L) {
+                val c = ChartGenerator.generate(analysis, DifficultyProfile.of(d), GenerationOptions(seed = seed))
+                for (n in c.notes) {
+                    val b = c.beatOf(n.time)
+                    val t = c.choreography.tracks[n.line]
+                    val th = Math.toRadians(t.rotation.at(b))
+                    val sx = t.x.at(b) + n.x * Math.cos(th)
+                    val sy = t.y.at(b) + n.x * Math.sin(th)
+                    assertTrue(abs(sx) <= 700.0 && abs(sy) <= 460.0, "$d seed=$seed sx=$sx sy=$sy")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun noNoteIsPlacedOnAHiddenLine() {
+        for (d in Difficulty.values()) {
+            val c = gen(d)
+            for (n in c.notes) {
+                val b = c.beatOf(n.time)
+                assertTrue(n.line in c.choreography.phraseAt(b).active)
+            }
+        }
+    }
+
+    @Test
+    fun notesOnlyRideVisibleNoteCarryingLines() {
+        for (d in Difficulty.values()) {
+            val c = gen(d)
+            for (n in c.notes) {
+                val t = c.choreography.tracks[n.line]
+                assertTrue(t.carriesNotes, "$d note on a decoration line")
+                assertTrue(t.alpha.at(c.beatOf(n.time)) >= 200.0, "$d note on a faded line")
+            }
+        }
+    }
+
+    @Test
+    fun decorationLinesAppearOnlyOnHigherDifficulties() {
+        assertEquals(0, gen(Difficulty.EZ).choreography.tracks.count { !it.carriesNotes })
+        assertTrue(gen(Difficulty.HD).choreography.tracks.any { !it.carriesNotes })
+        assertTrue(gen(Difficulty.AT).choreography.tracks.count { !it.carriesNotes } >= 2)
+    }
+
+    @Test
+    fun mainLineCarriesMostNotes() {
+        for (d in Difficulty.values()) {
+            val c = gen(d)
+            val onMain = c.notes.count { it.line == 0 }
+            assertTrue(onMain >= c.notes.size * 0.8, "$d main=$onMain total=${c.notes.size}")
+        }
+    }
+
+    @Test
+    fun higherDifficultiesUseMoreLineMovement() {
+        val ez = gen(Difficulty.EZ).choreography
+        assertEquals(1, ez.lineCount)
+        assertTrue(ez.phrases.all { it.active == listOf(0) })
     }
 
     @Test
@@ -198,8 +280,12 @@ class AiTest {
 
     private class Fake(val replies: MutableList<() -> HttpReply>) : HttpTransport {
         var calls = 0
+        val urls = ArrayList<String>()
+        val bodies = ArrayList<String>()
+        var lastHeaders: Map<String, String> = emptyMap()
         override fun post(url: String, headers: Map<String, String>, body: String, timeoutMs: Int): HttpReply {
             calls++
+            urls.add(url); bodies.add(body); lastHeaders = headers
             return replies.removeAt(0)()
         }
     }
@@ -243,6 +329,68 @@ class AiTest {
         val t = Fake(mutableListOf({ HttpReply(503, "") }, { HttpReply(503, "") }, { HttpReply(503, "") }, { ok("late") }))
         assertFailsWith<AiException> { AiClient(cfg, t) {}.chat("s", "u") }
         assertEquals(3, t.calls)
+    }
+
+    @Test
+    fun sendsUserAgentAndBearerKey() {
+        val t = Fake(mutableListOf({ ok("ok") }))
+        AiClient(cfg, t) {}.chat("s", "u")
+        assertTrue(t.lastHeaders["User-Agent"]!!.startsWith("PhiraChartGen"))
+        assertEquals("Bearer k", t.lastHeaders["Authorization"])
+        assertEquals("https://example.test/v1/chat/completions", t.urls[0])
+    }
+
+    @Test
+    fun acceptsPastedFullEndpointAndTrailingSlash() {
+        val t = Fake(mutableListOf({ ok("ok") }, { ok("ok") }))
+        AiClient(cfg.copy(baseUrl = "https://example.test/v1/chat/completions"), t) {}.chat("s", "u")
+        AiClient(cfg.copy(baseUrl = " https://example.test/v1/ "), t) {}.chat("s", "u")
+        assertEquals(listOf("https://example.test/v1/chat/completions", "https://example.test/v1/chat/completions"), t.urls)
+    }
+
+    @Test
+    fun switchesToMaxCompletionTokensWhenServerRequiresIt() {
+        val err = HttpReply(400, """{"error":{"message":"Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens' instead."}}""")
+        val t = Fake(mutableListOf({ err }, { ok("ok") }))
+        assertEquals("ok", AiClient(cfg, t) {}.chat("s", "u"))
+        assertTrue(t.bodies[0].contains("max_tokens") && !t.bodies[0].contains("max_completion_tokens"))
+        assertTrue(t.bodies[1].contains("max_completion_tokens"))
+    }
+
+    @Test
+    fun dropsTemperatureWhenServerRejectsIt() {
+        val err = HttpReply(400, """{"error":{"message":"Unsupported value: 'temperature' does not support 0.3 with this model."}}""")
+        val t = Fake(mutableListOf({ err }, { ok("ok") }))
+        assertEquals("ok", AiClient(cfg, t) {}.chat("s", "u"))
+        assertTrue(t.bodies[0].contains("temperature") && !t.bodies[1].contains("temperature"))
+    }
+
+    @Test
+    fun addsV1WhenHostOnlyAndServerReturns404() {
+        val t = Fake(mutableListOf({ HttpReply(404, "") }, { ok("ok") }))
+        assertEquals("ok", AiClient(cfg.copy(baseUrl = "https://api.example.test"), t) {}.chat("s", "u"))
+        assertEquals("https://api.example.test/v1/chat/completions", t.urls[1])
+    }
+
+    @Test
+    fun connectionTestAcceptsEmptyContentFromReasoningModels() {
+        val t = Fake(mutableListOf({ ok("") }))
+        assertEquals(null, AiClient(cfg, t) {}.test())
+    }
+
+    @Test
+    fun errorMessagesCarryServerDetailButNeverTheKey() {
+        val t = Fake(mutableListOf({ HttpReply(403, """{"error":{"message":"region blocked for key sk-secret-12345"}}""") }))
+        val ex = assertFailsWith<AiException> { AiClient(cfg.copy(apiKey = "sk-secret-12345"), t) {}.chat("s", "u") }
+        assertTrue(ex.message!!.contains("region blocked"))
+        assertTrue(!ex.message!!.contains("sk-secret-12345"))
+    }
+
+    @Test
+    fun plainHttpOnlyAllowedForLocalHosts() {
+        assertEquals(null, AiConfig("http://192.168.1.20:8000/v1", "k", "m").validate())
+        assertEquals(null, AiConfig("http://localhost:11434/v1", "k", "m").validate())
+        assertTrue(AiConfig("http://api.example.com/v1", "k", "m").validate() != null)
     }
 
     @Test

@@ -350,7 +350,7 @@ class MainActivity : ComponentActivity() {
                         true,
                     )
                 }
-                else -> renderPage(st.screen, Modifier.fillMaxSize(), false)
+                else -> renderPage(displayedScreen, Modifier.fillMaxSize(), false)
             }
 
             if (st.message != null) {

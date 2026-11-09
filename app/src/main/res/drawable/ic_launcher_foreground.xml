@@ -3,9 +3,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 三个下落音符与一条判定线 -->
-    <path android:fillColor="#FFFFFFFF" android:pathData="M30,28h14v8h-14z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M47,40h14v8h-14z" />
-    <path android:fillColor="#FFFFFFFF" android:pathData="M64,34h14v8h-14z" />
-    <path android:fillColor="#CCFFFFFF" android:pathData="M24,70h60v4h-60z" />
+    <path android:fillColor="#FF347EF4" android:pathData="M26,27h13v34h-13z M47,17h13v44h-13z M68,34h13v27h-13z" />
+    <path android:fillColor="#FF17191E" android:pathData="M17,72h74v5h-74z" />
+    <path android:fillColor="#FF347EF4" android:pathData="M21,82h66v4h-66z" />
 </vector>

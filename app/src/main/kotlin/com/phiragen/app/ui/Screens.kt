@@ -75,9 +75,9 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 PageTitle(
-                    title = "Phira 谱面生成器",
+                    title = "PhiraChartGen",
                     subtitle = "本地音频分析与谱面生成",
-                    action = { PTextButton("设置", onSettings) },
+                    action = { PTextButton("›", onSettings) },
                 )
 
                 val audio = st.audio
@@ -96,7 +96,7 @@ fun HomeScreen(
                                 if (cover != null) {
                                     Image(cover, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                 } else {
-                                    Txt("♪", Modifier.align(Alignment.Center), MiuixTheme.textStyles.title1, MiuixTheme.colorScheme.primary)
+                                    IconMusicMark(Modifier.align(Alignment.Center))
                                 }
                             }
                             Spacer(Modifier.width(14.dp))
@@ -191,7 +191,7 @@ private fun EmptyHome(st: UiState, dark: Boolean, onPick: () -> Unit, onResume: 
                     .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.10f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Txt("♪", style = MiuixTheme.textStyles.title1, color = MiuixTheme.colorScheme.primary)
+                IconMusicMark()
             }
             Spacer(Modifier.height(3.dp))
             Txt("导入音频开始制谱", style = MiuixTheme.textStyles.title3)
@@ -208,7 +208,7 @@ private fun EmptyHome(st: UiState, dark: Boolean, onPick: () -> Unit, onResume: 
                     Txt("继续上次的曲目", style = MiuixTheme.textStyles.body1)
                     Summary("复用已保存的分析, 无需重新解码")
                 }
-                PButton("继续", onResume, primary = false)
+                PTextButton("›", onResume)
             }
         }
     }
@@ -233,7 +233,7 @@ fun WorkingScreen(st: UiState, dark: Boolean, onCancel: () -> Unit, onRetry: () 
                             Txt("处理失败", style = MiuixTheme.textStyles.title3, color = Palette.bad)
                             Txt(st.error, align = TextAlign.Center)
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PButton("返回", onBack, Modifier.weight(1f), primary = false)
+                                PTextButton("›", onBack, Modifier.weight(1f))
                                 PButton("重试", onRetry, Modifier.weight(1f))
                             }
                         } else {
@@ -277,7 +277,7 @@ fun ResultScreen(
     onFormat: (ChartFormat) -> Unit,
     onSettings: () -> Unit,
 ) {
-    PScaffold(topBar = { PTopBar("生成结果", onBack, actions = { PTextButton("设置", onSettings) }) }) { pad ->
+    PScaffold(topBar = { PTopBar("生成结果", onBack, actions = { PTextButton("›", onSettings) }) }) { pad ->
         Box(Modifier.fillMaxSize()) {
             PageBackground(dark)
             Column(
@@ -360,7 +360,7 @@ private fun ChartCard(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Txt("${chart.noteCount} 个音符", style = MiuixTheme.textStyles.body1)
                     val nps = chart.noteCount / chart.durationSec.coerceAtLeast(1.0)
-                    Summary(String.format(Locale.ROOT, "平均 %.1f 个每秒  ·  %d 条判定线", nps, chart.profile.lineCount))
+                    Summary(String.format(Locale.ROOT, "平均 %.1f 个每秒  ·  %d 条判定线", nps, chart.lineCount))
                 }
             }
             val counts = NoteType.values().map { type -> type to chart.notes.count { it.type == type } }

@@ -40,7 +40,6 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.phiragen.app.UiState
 import com.phiragen.core.chart.Chart
 import com.phiragen.core.chart.NoteType
-import com.phiragen.core.export.LineMotion
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.PI
@@ -48,19 +47,6 @@ import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
-
-/** 与导出共用 LineMotion, 预览看到的判定线运动即导出结果 */
-private fun evalSegs(segs: List<LineMotion.Seg>, beat: Double, initial: Double): Double {
-    if (segs.isEmpty()) return initial
-    if (beat <= segs.first().start) return segs.first().from
-    for (s in segs) {
-        if (beat < s.end) {
-            val u = ((beat - s.start) / (s.end - s.start)).coerceIn(0.0, 1.0)
-            return s.from + (s.to - s.from) * (0.5 - cos(PI * u) / 2)
-        }
-    }
-    return segs.last().to
-}
 
 @Composable
 fun PreviewScreen(
@@ -82,14 +68,27 @@ fun PreviewScreen(
     if (playbackEnabled) {
         DisposableEffect(audio?.uri) {
             val mp = MediaPlayer()
+            var disposed = false
+            mp.setOnPreparedListener { prepared ->
+                if (!disposed) {
+                    player = prepared
+                    failed = false
+                } else {
+                    prepared.release()
+                }
+            }
+            mp.setOnErrorListener { _, _, _ ->
+                if (!disposed) failed = true
+                true
+            }
             try {
                 mp.setDataSource(context, audio!!.uri)
-                mp.prepare()
-                player = mp
+                mp.prepareAsync()
             } catch (_: Exception) {
                 failed = true
             }
             onDispose {
+                disposed = true
                 try { mp.release() } catch (_: Exception) {}
                 player = null
             }
@@ -164,16 +163,18 @@ private fun DrawScope.drawChart(chart: Chart, t: Double) {
     val cy = size.height / 2
     val unitsPerSec = chart.noteSpeed.toFloat() * 120f
     val beat = chart.beatOf(t)
-    for (li in 0 until chart.profile.lineCount) {
-        val m = LineMotion(chart, li)
-        val y = evalSegs(m.bob, beat, m.baseY).toFloat()
-        val theta = evalSegs(m.rotation, beat, 0.0)
+    for (li in 0 until chart.lineCount) {
+        val track = chart.choreography.tracks[li]
+        val y = track.y.at(beat).toFloat()
+        val lineX = track.x.at(beat).toFloat()
+        val lineAlpha = (track.alpha.at(beat) / 255.0).toFloat().coerceIn(0f, 1f)
+        val theta = track.rotation.at(beat)
         val rad = theta * PI / 180.0
         val d = Offset(cos(rad).toFloat(), -sin(rad).toFloat())
         val u = Offset(-sin(rad).toFloat(), -cos(rad).toFloat())
-        val p = Offset(cx, cy - y * scale)
+        val p = Offset(cx + lineX * scale, cy - y * scale)
         val half = size.width * 0.5f
-        drawLine(Color(0xCCFFF59D), p - d * half, p + d * half, strokeWidth = 3f)
+        drawLine(Color(0xFFFFF59D).copy(alpha = 0.8f * lineAlpha), p - d * half, p + d * half, strokeWidth = 3f)
         for (n in chart.notes) {
             if (n.line != li) continue
             val end = if (n.type == NoteType.HOLD) n.endTime else n.time

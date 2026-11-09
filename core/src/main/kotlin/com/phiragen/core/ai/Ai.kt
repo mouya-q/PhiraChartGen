@@ -6,6 +6,8 @@ import com.phiragen.core.chart.Guidance
 import com.phiragen.core.chart.GuidanceWindow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -17,7 +19,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.ConnectException
 import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.net.URL
 import kotlin.math.log10
 import kotlin.math.max
@@ -30,17 +35,34 @@ data class AiConfig(
     val timeoutMs: Int = 20_000,
     val retries: Int = 2,
 ) {
+    /** 规范化后的接口根地址: 去掉空白, 结尾斜杠, 以及误粘贴的 /chat/completions */
+    fun normalizedBase(): String {
+        var u = baseUrl.trim().trimEnd('/')
+        if (u.endsWith("/chat/completions")) u = u.removeSuffix("/chat/completions").trimEnd('/')
+        return u
+    }
+
     /** 返回第一个校验失败的原因, 全部通过返回 null */
     fun validate(): String? {
-        val u = baseUrl.trim()
+        val u = normalizedBase()
         if (!(u.startsWith("https://") || u.startsWith("http://"))) return "接口地址需以 http:// 或 https:// 开头"
         if (u.length < 10) return "接口地址过短"
+        if (u.startsWith("http://") && !isLocalHost(u)) return "明文 http 只允许本机或局域网地址, 其他请使用 https"
         if (apiKey.isBlank()) return "请填写密钥"
         if (model.isBlank()) return "请填写模型名称"
         if (timeoutMs !in 3_000..120_000) return "超时需在 3 到 120 秒之间"
         if (retries !in 0..5) return "重试次数需在 0 到 5 之间"
         return null
     }
+}
+
+/** 允许明文传输的主机: 本机, 局域网, .local 域名 */
+internal fun isLocalHost(url: String): Boolean {
+    val host = try { URL(url).host.lowercase() } catch (e: Exception) { return false }
+    if (host == "localhost" || host.endsWith(".local")) return true
+    val p = host.split('.').mapNotNull { it.toIntOrNull() }
+    if (p.size != 4) return false
+    return p[0] == 10 || p[0] == 127 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && p[1] in 16..31)
 }
 
 enum class AiErrorKind(val text: String) {
@@ -93,13 +115,25 @@ class AiClient(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 请求参数的兼容开关, 遇到服务端明确拒绝时自动调整 */
+    private class Quirks {
+        var useMaxCompletionTokens = false
+        var sendTemperature = true
+        var extraV1 = false
+    }
+
     /** 发送对话请求并返回助手文本, 对可重试错误做指数退避 */
-    fun chat(system: String, user: String, maxTokens: Int = 1200): String {
+    fun chat(system: String, user: String, maxTokens: Int = 1200, requireText: Boolean = true): String {
         config.validate()?.let { throw AiException(AiErrorKind.BAD_REQUEST, it) }
+        val quirks = Quirks()
         var attempt = 0
+        var adapted = 0
         while (true) {
             try {
-                return once(system, user, maxTokens)
+                return once(system, user, maxTokens, quirks, requireText)
+            } catch (e: AdaptRequest) {
+                // 服务端指出参数不被支持: 调整后立即重发, 不计入重试次数
+                if (++adapted > 3) throw AiException(AiErrorKind.BAD_REQUEST, e.reason)
             } catch (e: AiException) {
                 if (!e.retryable || attempt >= config.retries) throw e
                 sleeper(500L shl attempt)
@@ -108,51 +142,112 @@ class AiClient(
         }
     }
 
-    /** 连接测试: 发送极短请求, 成功返回 null, 失败返回原因 */
+    /** 连接测试: 只要服务端返回合法的补全响应即视为成功, 不要求有文本 (推理模型可能先输出空内容) */
     fun test(): String? = try {
-        chat("只回答 ok", "ping", maxTokens = 8)
+        chat("只回答 ok", "ping", maxTokens = 64, requireText = false)
         null
     } catch (e: AiException) {
         e.message
     }
 
-    private fun once(system: String, user: String, maxTokens: Int): String {
+    private class AdaptRequest(val reason: String) : Exception(reason)
+
+    private fun once(system: String, user: String, maxTokens: Int, q: Quirks, requireText: Boolean): String {
         val body = buildJsonObject {
             put("model", config.model.trim())
-            put("temperature", 0.3)
-            put("max_tokens", maxTokens)
+            if (q.sendTemperature) put("temperature", 0.3)
+            put(if (q.useMaxCompletionTokens) "max_completion_tokens" else "max_tokens", maxTokens)
             put("messages", buildJsonArray {
                 add(buildJsonObject { put("role", "system"); put("content", system) })
                 add(buildJsonObject { put("role", "user"); put("content", user) })
             })
         }.toString()
-        val url = config.baseUrl.trim().trimEnd('/') + "/chat/completions"
+        val base = config.normalizedBase() + if (q.extraV1) "/v1" else ""
+        val url = "$base/chat/completions"
         val reply = try {
             transport.post(
                 url,
-                mapOf("Content-Type" to "application/json", "Authorization" to "Bearer ${config.apiKey.trim()}"),
+                mapOf(
+                    "Content-Type" to "application/json",
+                    "Accept" to "application/json",
+                    "Authorization" to "Bearer ${config.apiKey.trim()}",
+                    // 部分网关会拦截默认的 Java 请求头
+                    "User-Agent" to "PhiraChartGen/1.0 (Android)",
+                ),
                 body,
                 config.timeoutMs,
             )
         } catch (e: SocketTimeoutException) {
             throw AiException(AiErrorKind.TIMEOUT)
+        } catch (e: UnknownHostException) {
+            throw AiException(AiErrorKind.NETWORK, "无法解析域名 ${hostOf(base)}, 请检查接口地址与网络")
+        } catch (e: SSLException) {
+            throw AiException(AiErrorKind.NETWORK, "TLS 握手失败 (${e.javaClass.simpleName}), 请检查证书, 系统时间或是否被代理拦截")
+        } catch (e: ConnectException) {
+            throw AiException(AiErrorKind.NETWORK, "无法连接到 ${hostOf(base)}, 请检查地址, 端口与网络")
         } catch (e: IOException) {
-            throw AiException(AiErrorKind.NETWORK)
+            val extra = e.message?.take(80)?.let { ": $it" } ?: ""
+            throw AiException(AiErrorKind.NETWORK, "网络错误 (${e.javaClass.simpleName}$extra)")
         }
+        val detail = errorDetail(reply.body)
         when (reply.code) {
             in 200..299 -> Unit
-            401, 403 -> throw AiException(AiErrorKind.AUTH)
-            429 -> throw AiException(AiErrorKind.RATE_LIMIT)
-            in 400..499 -> throw AiException(AiErrorKind.BAD_REQUEST)
-            else -> throw AiException(AiErrorKind.SERVER, "服务端错误 ${reply.code}")
+            401 -> throw AiException(AiErrorKind.AUTH, "密钥无效 (401)" + suffix(detail))
+            403 -> throw AiException(AiErrorKind.AUTH, "无权限 (403), 可能是密钥权限, 地区限制或网关拦截" + suffix(detail))
+            404 -> {
+                // 常见情况: 地址缺少 /v1
+                if (!q.extraV1 && !config.normalizedBase().substringAfter("://").contains("/")) { q.extraV1 = true; throw AdaptRequest("404") }
+                throw AiException(AiErrorKind.BAD_REQUEST, "接口不存在 (404), 请检查地址是否需要带 /v1 与模型名称" + suffix(detail))
+            }
+            429 -> throw AiException(AiErrorKind.RATE_LIMIT, "请求过于频繁或额度不足 (429)" + suffix(detail))
+            400, 422 -> {
+                val d = detail.lowercase()
+                if (!q.useMaxCompletionTokens && d.contains("max_completion_tokens")) { q.useMaxCompletionTokens = true; throw AdaptRequest("max_tokens") }
+                if (q.sendTemperature && d.contains("temperature")) { q.sendTemperature = false; throw AdaptRequest("temperature") }
+                throw AiException(AiErrorKind.BAD_REQUEST, "请求被拒绝 (${reply.code})" + suffix(detail))
+            }
+            in 400..499 -> throw AiException(AiErrorKind.BAD_REQUEST, "请求被拒绝 (${reply.code})" + suffix(detail))
+            else -> throw AiException(AiErrorKind.SERVER, "服务端错误 (${reply.code})" + suffix(detail))
         }
         return try {
             val root = json.parseToJsonElement(reply.body).jsonObject
-            root["choices"]!!.jsonArray[0].jsonObject["message"]!!.jsonObject["content"]!!.jsonPrimitive.content
+            val msg = root["choices"]!!.jsonArray[0].jsonObject["message"]!!.jsonObject
+            val text = contentText(msg["content"]).ifEmpty { contentText(msg["reasoning_content"]) }
+            if (requireText && text.isBlank()) throw AiException(AiErrorKind.FORMAT, "模型返回了空内容, 可能被截断或是推理模型, 请换用对话模型")
+            text
+        } catch (e: AiException) {
+            throw e
         } catch (e: Exception) {
-            throw AiException(AiErrorKind.FORMAT)
+            throw AiException(AiErrorKind.FORMAT, "返回内容不是标准的对话补全格式" + suffix(reply.body.take(80).replace('\n', ' ')))
         }
     }
+
+    /** content 可能是字符串, 也可能是带 text 字段的分段数组 */
+    private fun contentText(el: JsonElement?): String = when (el) {
+        null, JsonNull -> ""
+        is JsonPrimitive -> el.content
+        is JsonArray -> el.joinToString("") { part -> (part as? JsonObject)?.get("text")?.let { (it as? JsonPrimitive)?.content } ?: "" }
+        else -> ""
+    }
+
+    /** 提取服务端错误信息, 只取 message 字段, 不回显请求头与密钥 */
+    private fun errorDetail(body: String): String = try {
+        val o = json.parseToJsonElement(body).jsonObject
+        val err = o["error"]
+        val msg = when (err) {
+            is JsonObject -> (err["message"] as? JsonPrimitive)?.content
+            is JsonPrimitive -> err.content
+            else -> (o["message"] as? JsonPrimitive)?.content
+        } ?: ""
+        val key = config.apiKey.trim()
+        val safe = if (key.length >= 8) msg.replace(key, "***") else msg
+        safe.take(160)
+    } catch (e: Exception) {
+        ""
+    }
+
+    private fun suffix(d: String) = if (d.isBlank()) "" else ": $d"
+    private fun hostOf(url: String) = try { URL(url).host } catch (e: Exception) { url }
 }
 
 sealed class AiOutcome {

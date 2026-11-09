@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -158,7 +159,7 @@ fun PTextButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
 fun PTopBar(title: String, onBack: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
     TopAppBar(
         title = title,
-        navigationIcon = { if (onBack != null) PTextButton("返回", onBack) },
+        navigationIcon = {},
         actions = actions,
     )
 }
@@ -352,4 +353,17 @@ fun ConfirmDialog(
 @Composable
 fun Dot(color: Color) {
     Box(Modifier.width(8.dp).height(8.dp).clip(RoundedCornerShape(4.dp)).background(color))
+}
+
+@Composable
+fun IconMusicMark(modifier: Modifier = Modifier) {
+    val c = MiuixTheme.colorScheme.primary
+    androidx.compose.foundation.Canvas(modifier.size(30.dp)) {
+        val w = size.width
+        val h = size.height
+        drawRoundRect(c, androidx.compose.ui.geometry.Offset(w * .16f, h * .12f), androidx.compose.ui.geometry.Size(w * .12f, h * .57f), androidx.compose.ui.geometry.CornerRadius(w * .06f))
+        drawRoundRect(c, androidx.compose.ui.geometry.Offset(w * .43f, h * .04f), androidx.compose.ui.geometry.Size(w * .12f, h * .65f), androidx.compose.ui.geometry.CornerRadius(w * .06f))
+        drawRoundRect(c, androidx.compose.ui.geometry.Offset(w * .70f, h * .22f), androidx.compose.ui.geometry.Size(w * .12f, h * .47f), androidx.compose.ui.geometry.CornerRadius(w * .06f))
+        drawRoundRect(c.copy(alpha = .72f), androidx.compose.ui.geometry.Offset(w * .08f, h * .78f), androidx.compose.ui.geometry.Size(w * .84f, h * .08f), androidx.compose.ui.geometry.CornerRadius(w * .04f))
+    }
 }

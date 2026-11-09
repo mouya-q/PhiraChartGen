@@ -1,4 +1,4 @@
-# Phira 谱面生成器
+# PhiraChartGen
 
 在 Android 上导入本地音频, 离线分析节奏, 一键生成可在 Phira 中导入的谱面包. 可选接入大模型做编排增强, 不可用时自动回退离线生成.
 
@@ -7,6 +7,7 @@
 - 音频导入与分块解码, 使用系统解码器, 支持 MP3, FLAC, OGG, WAV, M4A 等
 - 离线分析: 起音检测, BPM 估计, 第一拍对齐
 - 四档难度 EZ, HD, IN, AT, 含点击, 长按, 滑动, 拖动, 同时按键
+- 判定线编排参考真人谱: 稳定主线加装饰线动画, 高潮段拆线与旋转
 - 导出 RPE JSON, Phigros 官方 JSON, PEC 三种格式, 在界面中选择
 - 内置兼容性验证, 另附独立校验脚本
 - 谱面预览与试听
@@ -41,6 +42,7 @@
 | --- | --- |
 | [docs/BUILD.md](docs/BUILD.md) | 构建指南与云端 CI 说明 |
 | [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md) | 构建与验证状态, 含 CI 运行记录 |
+| [docs/CHART_STUDY.md](docs/CHART_STUDY.md) | 玩家谱研究: 真人如何写判定线动画与音符 |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 用户手册 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构说明与决策记录 |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Phira 兼容性验证方法与状态 |

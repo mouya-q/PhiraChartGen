@@ -62,9 +62,12 @@ object ChartGenerator {
         val onsets = extractOnsets(a, profile.peakThreshold)
         val chosen = select(onsets, a, profile, phi, beat, dur, options)
         if (chosen.isEmpty()) throw AnalysisException("没有检测到足够的节奏起伏, 请换一段节奏更明显的音频")
-        val build = buildNotes(chosen, a, profile, phi, beat, dur, options)
-        val (value, level) = estimateLevel(build, dur)
-        return Chart(profile, build, a.bpm, phi, dur, value, level, options.noteSpeed)
+        val toBeat = { s: Double -> if (s < phi) s / phi else 1.0 + (s - phi) / beat }
+        val noteBeats = DoubleArray(chosen.size) { toBeat(chosen[it].time) }
+        val choreo = ChoreographyBuilder.build(a, profile, phi, beat, dur, a.bpm, Random(options.seed + 101), toBeat, noteBeats)
+        val built = buildNotes(chosen, a, profile, phi, beat, dur, options, choreo, toBeat)
+        val (value, level) = estimateLevel(built, dur)
+        return Chart(profile, built, a.bpm, phi, dur, value, level, choreo, options.noteSpeed)
     }
 
     // ---------- 候选提取 ----------
@@ -198,7 +201,7 @@ object ChartGenerator {
 
     private fun buildNotes(
         chosenIn: List<Onset>, a: AnalysisResult, p: DifficultyProfile, phi: Double, beat: Double,
-        dur: Double, o: GenerationOptions,
+        dur: Double, o: GenerationOptions, choreo: Choreography, toBeat: (Double) -> Double,
     ): List<Note> {
         val rng = Random(o.seed)
         var chosen = chosenIn
@@ -211,9 +214,9 @@ object ChartGenerator {
         for (i in 0 until n) {
             val c = chosen[i]
             if (c.sustainSec >= 0.45 && c.sustainBin > 0) {
-                var e = c.time + min(c.sustainSec, 4 * beat)
+                var e = c.time + min(c.sustainSec, 2 * beat)
                 e = snap(e, phi, beat, p.division, 0.05)
-                if (e - c.time >= 0.4) holdCands.add(Triple(c.sustainSec, i, e))
+                if (e - c.time >= max(0.25, 0.5 * beat)) holdCands.add(Triple(c.sustainSec, i, e))
             }
         }
         holdCands.sortByDescending { it.first }
@@ -313,13 +316,25 @@ object ChartGenerator {
             prevT = c.time
         }
 
-        // 判定线分配与音符
+        // 判定线分配: 轨道按乐句分给可见的判定线, 横坐标补偿判定线的位置, 使音符在命中时落在固定轨道上
         val notes = ArrayList<Note>(n + n / 8)
-        for (i in 0 until n) {
-            val b = (chosen[i].time - phi) / beat
-            val line = if (p.lineCount == 1) 0 else (Math.floorMod(Math.floor(b / 8).toInt(), 2))
-            notes.add(Note(chosen[i].time, ends[i], types[i], p.lanes[laneOf[i]], line))
+        fun place(time: Double, endTime: Double, type: NoteType, lane: Int): Note {
+            val b = toBeat(time)
+            val ph = choreo.phraseAt(b)
+            val line = choreo.lineFor(b, lane, laneCount)
+            var end = endTime
+            var t = type
+            if (t == NoteType.HOLD) {
+                val endBeat = toBeat(end)
+                if (!choreo.activeThrough(line, b, endBeat)) {
+                    end = phi + (ph.endBeat - 1.0) * beat - 0.05
+                    if (end - time < 0.25) { t = NoteType.TAP; end = time }
+                }
+            } else end = time
+            val rel = p.lanes[lane] * ph.laneScale - choreo.tracks[line].x.at(b)
+            return Note(time, end, t, rel.coerceIn(-640.0, 640.0), line)
         }
+        for (i in 0 until n) notes.add(place(chosen[i].time, ends[i], types[i], laneOf[i]))
 
         // 同时按键: 仅高难度, 在强重音处补一个拉开距离的 Tap
         if (p.chordRatio > 0 && n > 0) {
@@ -337,8 +352,9 @@ object ChartGenerator {
                         abs(l - a0) >= 2 && holdSpans.none { it.first == l && c.time > it.second - 0.02 && c.time < it.third }
                     }
                     if (opts.isNotEmpty()) {
-                        val ln = opts[rng.nextInt(opts.size)]
-                        extra.add(Note(c.time, c.time, NoteType.TAP, p.lanes[ln], notes[i].line))
+                        val mirrorLane = laneCount - 1 - a0
+                        val ln = if (mirrorLane in opts && rng.nextDouble() < 0.6) mirrorLane else opts[rng.nextInt(opts.size)]
+                        extra.add(place(c.time, c.time, NoteType.TAP, ln))
                         added++
                     }
                 }

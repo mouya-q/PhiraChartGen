@@ -32,7 +32,7 @@ fun AboutScreen(dark: Boolean, onBack: () -> Unit, onLicenses: () -> Unit, versi
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(pad).padding(bottom = 32.dp),
             ) {
-                Section("Phira 谱面生成器") {
+                Section("PhiraChartGen") {
                     Column(Modifier.padding(16.dp)) {
                         Txt("版本 $versionName", style = MiuixTheme.textStyles.body1)
                         Summary("导入本地音频, 离线分析节奏并生成 Phira 可用的谱面包, 可选 AI 增强")

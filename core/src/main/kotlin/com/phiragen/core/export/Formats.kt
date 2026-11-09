@@ -1,9 +1,9 @@
 package com.phiragen.core.export
 
+import com.phiragen.core.chart.Channel
 import com.phiragen.core.chart.Chart
 import com.phiragen.core.chart.ChartFormat
 import com.phiragen.core.chart.ChartMeta
-import com.phiragen.core.chart.Difficulty
 import com.phiragen.core.chart.Note
 import com.phiragen.core.chart.NoteType
 import kotlinx.serialization.json.JsonArray
@@ -17,46 +17,6 @@ import kotlinx.serialization.json.putJsonArray
 import java.util.Locale
 
 private const val DEN = 960
-
-/** 判定线的运动设计, 三种导出格式共用 */
-class LineMotion(chart: Chart, line: Int) {
-    class Seg(val start: Double, val end: Double, val from: Double, val to: Double)
-
-    val baseY: Double = when {
-        chart.profile.lineCount == 1 -> -150.0
-        line == 0 -> -110.0
-        else -> -270.0
-    }
-    val endBeat: Double = chart.beatOf(chart.durationSec) + 8.0
-    val rotation = ArrayList<Seg>()
-    val bob = ArrayList<Seg>()
-
-    init {
-        val amp = chart.profile.swayDegrees
-        if (amp > 0) {
-            var sign = if (line == 0) 1.0 else -1.0
-            var b = 1.0
-            while (b < endBeat) {
-                rotation.add(Seg(b, b + 8, sign * amp, -sign * amp))
-                sign = -sign
-                b += 8.0
-            }
-        }
-        if (chart.profile.difficulty == Difficulty.IN || chart.profile.difficulty == Difficulty.AT) {
-            val amount = if (chart.profile.difficulty == Difficulty.IN) 25.0 else 45.0
-            var s = 1.0
-            var b = 1.0
-            while (b < endBeat) {
-                bob.add(Seg(b, b + 16, baseY + s * amount, baseY - s * amount))
-                s = -s
-                b += 16.0
-            }
-        }
-    }
-
-    val initialY: Double get() = if (bob.isNotEmpty()) bob.first().from else baseY
-    val initialRotation: Double get() = if (rotation.isNotEmpty()) rotation.first().from else 0.0
-}
 
 internal fun beatTriple(beat: Double): JsonArray {
     var b = if (beat < 0) 0.0 else beat
@@ -91,35 +51,19 @@ object RpeExporter {
         put("startTime", beatTriple(start))
     }
 
-    private fun constant(value: Double, end: Double): JsonArray = JsonArray(listOf(event(0.0, end, value, value, 1)))
+    private fun events(ch: Channel): JsonArray = JsonArray(ch.segs.map { event(it.start, it.end, it.from, it.to, it.easing) })
 
-    private fun contiguous(segs: List<LineMotion.Seg>, endBeat: Double, fallback: Double): JsonArray {
-        if (segs.isEmpty()) return constant(fallback, endBeat)
-        val out = ArrayList<JsonElement>()
-        var cur = 0.0
-        var last = segs.first().from
-        for (s in segs) {
-            if (s.start > cur) out.add(event(cur, s.start, last, last, 1))
-            out.add(event(s.start, s.end, s.from, s.to, 6))
-            cur = s.end
-            last = s.to
-        }
-        if (cur < endBeat) out.add(event(cur, endBeat, last, last, 1))
-        return JsonArray(out)
-    }
-
-    private fun controls(key: String, value: Double, xKey: String = "x"): JsonArray = buildJsonArray {
+    private fun controls(key: String, value: Double): JsonArray = buildJsonArray {
         for (x in listOf(0.0, 9999999.0)) {
             add(buildJsonObject {
                 put("easing", 1)
                 put(key, value)
-                put(xKey, x)
+                put("x", x)
             })
         }
     }
 
     fun toJson(chart: Chart, meta: ChartMeta, assets: PackNames): JsonObject {
-        val speed = chart.noteSpeed
         val lead = 60.0 / chart.firstBeatSec
         return buildJsonObject {
             putJsonArray("BPMList") {
@@ -146,16 +90,17 @@ object RpeExporter {
             })
             putJsonArray("judgeLineGroup") { add(JsonPrimitive("Default")) }
             putJsonArray("judgeLineList") {
-                for (li in 0 until chart.profile.lineCount) add(lineJson(chart, li, speed))
+                for (li in 0 until chart.lineCount) add(lineJson(chart, li))
             }
-            put("multiLineString", (1..chart.profile.lineCount).joinToString(" "))
+            put("multiLineString", (1..chart.lineCount).joinToString(" "))
             put("multiScale", 1.0)
             put("xybind", false)
         }
     }
 
-    private fun lineJson(chart: Chart, li: Int, speed: Double): JsonObject {
-        val m = LineMotion(chart, li)
+    private fun lineJson(chart: Chart, li: Int): JsonObject {
+        val t = chart.choreography.tracks[li]
+        val endBeat = chart.choreography.endBeat
         val lineNotes = chart.notes.filter { it.line == li }
         return buildJsonObject {
             put("Group", 0)
@@ -167,17 +112,17 @@ object RpeExporter {
                 add(buildJsonObject {
                     putJsonArray("speedEvents") {
                         add(buildJsonObject {
-                            put("end", speed)
-                            put("endTime", beatTriple(m.endBeat))
+                            put("end", chart.noteSpeed)
+                            put("endTime", beatTriple(endBeat))
                             put("linkgroup", 0)
-                            put("start", speed)
+                            put("start", chart.noteSpeed)
                             put("startTime", beatTriple(0.0))
                         })
                     }
-                    put("moveXEvents", constant(0.0, m.endBeat))
-                    put("moveYEvents", contiguous(m.bob, m.endBeat, m.baseY))
-                    put("rotateEvents", contiguous(m.rotation, m.endBeat, 0.0))
-                    put("alphaEvents", constant(255.0, m.endBeat))
+                    put("moveXEvents", events(t.x))
+                    put("moveYEvents", events(t.y))
+                    put("rotateEvents", events(t.rotation))
+                    put("alphaEvents", events(t.alpha))
                 })
             }
             put("extended", buildJsonObject {
@@ -213,6 +158,31 @@ object RpeExporter {
     }
 }
 
+/**
+ * 官方 JSON 与 PEC 的事件只能表达线性变化 (PEC 的 cm 同时带 x 与 y),
+ * 这里把多条通道合并到统一时间轴, 缓动段切成若干线性小段近似
+ */
+internal object Sampling {
+    class Piece(val start: Double, val end: Double)
+
+    fun pieces(vararg channels: Channel): List<Piece> {
+        val marks = java.util.TreeSet<Double>()
+        for (c in channels) for (s in c.segs) { marks.add(s.start); marks.add(s.end) }
+        val list = marks.toList()
+        val out = ArrayList<Piece>()
+        for (i in 0 until list.size - 1) {
+            val a = list[i]
+            val b = list[i + 1]
+            val varying = channels.any { c -> abs(c.at(a) - c.at(b)) > 1e-9 || c.segs.any { it.easing != 1 && it.start < b && it.end > a && it.from != it.to } }
+            val count = if (varying) Math.ceil((b - a) * 1.5).toInt().coerceIn(2, 12) else 1
+            for (k in 0 until count) out.add(Piece(a + (b - a) * k / count, a + (b - a) * (k + 1) / count))
+        }
+        return out
+    }
+
+    private fun abs(v: Double) = Math.abs(v)
+}
+
 // ------------------------------------------------------------------ Phigros 官方
 
 object OfficialExporter {
@@ -222,22 +192,23 @@ object OfficialExporter {
     fun toJson(chart: Chart): JsonObject {
         val unit = chart.beatSec / 32.0
         val speed = chart.noteSpeed / 4.5
-        fun u(sec: Double) = Math.round(sec / unit).toInt()
-        fun ypos(y: Double) = (y + 450.0) / 900.0
+        fun u(beat: Double) = Math.round(chart.secOf(beat) / unit).toInt()
+        fun fx(x: Double) = Math.round((0.5 + x / 1350.0) * 1e5) / 1e5
+        fun fy(y: Double) = Math.round((y + 450.0) / 900.0 * 1e5) / 1e5
         return buildJsonObject {
             put("formatVersion", 3)
             put("offset", 0.0)
             put("numOfNotes", chart.noteCount)
             putJsonArray("judgeLineList") {
-                for (li in 0 until chart.profile.lineCount) {
-                    val m = LineMotion(chart, li)
+                for (li in 0 until chart.lineCount) {
+                    val t = chart.choreography.tracks[li]
                     add(buildJsonObject {
                         put("bpm", Math.round(chart.bpm * 1e6) / 1e6)
                         putJsonArray("notesAbove") {
                             for (n in chart.notes.filter { it.line == li }) {
                                 add(buildJsonObject {
                                     put("type", n.type.id)
-                                    put("time", u(n.time))
+                                    put("time", Math.round(n.time / unit).toInt())
                                     val hold = if (n.type == NoteType.HOLD) (n.endTime - n.time) / unit else 0.0
                                     put("holdTime", Math.round(hold * 1000.0) / 1000.0)
                                     put("positionX", Math.round(n.x / 75.9375 * 10000.0) / 10000.0)
@@ -256,43 +227,36 @@ object OfficialExporter {
                             })
                         }
                         putJsonArray("judgeLineMoveEvents") {
-                            var curU = BEFORE
-                            var curY = ypos(m.initialY)
-                            fun move(s: Int, e: Int, y0: Double, y1: Double) = add(buildJsonObject {
+                            val ps = Sampling.pieces(t.x, t.y)
+                            fun move(s: Int, e: Int, x0: Double, x1: Double, y0: Double, y1: Double) = add(buildJsonObject {
                                 put("startTime", s); put("endTime", e)
-                                put("start", 0.5); put("end", 0.5)
+                                put("start", x0); put("end", x1)
                                 put("start2", y0); put("end2", y1)
                             })
-                            for (seg in m.bob) {
-                                val su = u(chart.secOf(seg.start))
-                                val eu = u(chart.secOf(seg.end))
-                                if (su > curU) move(curU, su, curY, curY)
-                                move(su, eu, ypos(seg.from), ypos(seg.to))
-                                curU = eu; curY = ypos(seg.to)
-                            }
-                            move(curU, FAR, curY, curY)
+                            move(BEFORE, 0, fx(t.x.at(0.0)), fx(t.x.at(0.0)), fy(t.y.at(0.0)), fy(t.y.at(0.0)))
+                            for (p in ps) move(u(p.start), u(p.end), fx(t.x.at(p.start)), fx(t.x.at(p.end)), fy(t.y.at(p.start)), fy(t.y.at(p.end)))
+                            val last = chart.choreography.endBeat
+                            move(u(last), FAR, fx(t.x.at(last)), fx(t.x.at(last)), fy(t.y.at(last)), fy(t.y.at(last)))
                         }
                         putJsonArray("judgeLineRotateEvents") {
-                            var curU = BEFORE
-                            var curA = m.initialRotation
                             fun rot(s: Int, e: Int, a0: Double, a1: Double) = add(buildJsonObject {
                                 put("startTime", s); put("endTime", e)
-                                put("start", a0); put("end", a1)
+                                put("start", Math.round(a0 * 1000.0) / 1000.0); put("end", Math.round(a1 * 1000.0) / 1000.0)
                             })
-                            for (seg in m.rotation) {
-                                val su = u(chart.secOf(seg.start))
-                                val eu = u(chart.secOf(seg.end))
-                                if (su > curU) rot(curU, su, curA, curA)
-                                rot(su, eu, seg.from, seg.to)
-                                curU = eu; curA = seg.to
-                            }
-                            rot(curU, FAR, curA, curA)
+                            rot(BEFORE, 0, t.rotation.at(0.0), t.rotation.at(0.0))
+                            for (p in Sampling.pieces(t.rotation)) rot(u(p.start), u(p.end), t.rotation.at(p.start), t.rotation.at(p.end))
+                            val last = chart.choreography.endBeat
+                            rot(u(last), FAR, t.rotation.at(last), t.rotation.at(last))
                         }
                         putJsonArray("judgeLineDisappearEvents") {
-                            add(buildJsonObject {
-                                put("startTime", BEFORE); put("endTime", FAR)
-                                put("start", 1.0); put("end", 1.0)
+                            fun dis(s: Int, e: Int, a0: Double, a1: Double) = add(buildJsonObject {
+                                put("startTime", s); put("endTime", e)
+                                put("start", Math.round(a0 / 255.0 * 1000.0) / 1000.0); put("end", Math.round(a1 / 255.0 * 1000.0) / 1000.0)
                             })
+                            dis(BEFORE, 0, t.alpha.at(0.0), t.alpha.at(0.0))
+                            for (p in Sampling.pieces(t.alpha)) dis(u(p.start), u(p.end), t.alpha.at(p.start), t.alpha.at(p.end))
+                            val last = chart.choreography.endBeat
+                            dis(u(last), FAR, t.alpha.at(last), t.alpha.at(last))
                         }
                     })
                 }
@@ -304,29 +268,36 @@ object OfficialExporter {
 // ------------------------------------------------------------------ PEC
 
 object PecExporter {
+    private fun px(x: Double) = x * 1024.0 / 675.0
+    private fun py(y: Double) = y * 700.0 / 450.0
+
     fun toText(chart: Chart): String {
         val sb = StringBuilder()
-        val speed = chart.noteSpeed
         sb.append("0\n")
         sb.append("bp 0.000 ").append(fmt(60.0 / chart.firstBeatSec)).append('\n')
         sb.append("bp 1.000 ").append(fmt(chart.bpm)).append('\n')
-        for (li in 0 until chart.profile.lineCount) {
-            val m = LineMotion(chart, li)
-            sb.append("cv $li 0.000 ").append(fmt(speed)).append('\n')
-            sb.append("cp $li 0.000 0.000 ").append(fmt(m.initialY * 700.0 / 450.0)).append('\n')
-            sb.append("ca $li 0.000 255\n")
-            sb.append("cd $li 0.000 ").append(fmt(-m.initialRotation)).append('\n')
-            for (s in m.bob) {
-                sb.append("cm $li ").append(fmt(s.start)).append(' ').append(fmt(s.end))
-                    .append(" 0.000 ").append(fmt(s.to * 700.0 / 450.0)).append(" 6\n")
+        for (li in 0 until chart.lineCount) {
+            val t = chart.choreography.tracks[li]
+            sb.append("cv $li 0.000 ").append(fmt(chart.noteSpeed)).append('\n')
+            sb.append("cp $li 0.000 ").append(fmt(px(t.x.at(0.0)))).append(' ').append(fmt(py(t.y.at(0.0)))).append('\n')
+            sb.append("ca $li 0.000 ").append(fmt(t.alpha.at(0.0), 0)).append('\n')
+            sb.append("cd $li 0.000 ").append(fmt(-t.rotation.at(0.0))).append('\n')
+            for (p in Sampling.pieces(t.x, t.y)) {
+                sb.append("cm $li ").append(fmt(p.start)).append(' ').append(fmt(p.end)).append(' ')
+                    .append(fmt(px(t.x.at(p.end)))).append(' ').append(fmt(py(t.y.at(p.end)))).append(" 1\n")
             }
-            for (s in m.rotation) {
-                sb.append("cr $li ").append(fmt(s.start)).append(' ').append(fmt(s.end))
-                    .append(' ').append(fmt(-s.to)).append(" 6\n")
+            for (p in Sampling.pieces(t.rotation)) {
+                sb.append("cr $li ").append(fmt(p.start)).append(' ').append(fmt(p.end)).append(' ')
+                    .append(fmt(-t.rotation.at(p.end))).append(" 1\n")
+            }
+            for (p in Sampling.pieces(t.alpha)) {
+                if (Math.abs(t.alpha.at(p.start) - t.alpha.at(p.end)) < 1e-9) continue
+                sb.append("cf $li ").append(fmt(p.start)).append(' ').append(fmt(p.end)).append(' ')
+                    .append(fmt(t.alpha.at(p.end), 0)).append('\n')
             }
         }
         for (n in chart.notes) {
-            val x = n.x * 1024.0 / 675.0
+            val x = px(n.x)
             val b = chart.beatOf(n.time)
             if (n.type == NoteType.HOLD) {
                 sb.append("n2 ${n.line} ").append(fmt(b)).append(' ').append(fmt(chart.beatOf(n.endTime)))

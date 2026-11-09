@@ -1,17 +1,18 @@
 import numpy as np, math
+import choreo
 from dataclasses import dataclass, field
 from analysis import FPS, SR, N, HOP
 
 @dataclass
 class Params:
     key: str; name: str; nps: float; min_gap: float; div: int; lanes: list
-    chord: float; hold: float; flick: float; drag: float; lines: int; amp: float; thr: float = 0.12
+    chord: float; hold: float; flick: float; drag: float; lines: int = 1; amp: float = 0; thr: float = 0.12
 
 PARAMS = {
- 'EZ': Params('EZ','EZ',1.4,0.38,2,[-360,0,360],0.0,0.12,0.0,0.0,1,0,0.14),
- 'HD': Params('HD','HD',2.6,0.22,2,[-420,-140,140,420],0.0,0.15,0.05,0.0,1,2.5,0.10),
- 'IN': Params('IN','IN',4.4,0.125,4,[-540,-270,0,270,540],0.08,0.12,0.07,0.15,2,3.0,0.07),
- 'AT': Params('AT','AT',6.4,0.09,4,[-540,-270,0,270,540],0.15,0.10,0.09,0.25,2,5.0,0.05),
+ 'EZ': Params('EZ','EZ',1.5,0.38,2,[-270,0,270],0.0,0.12,0.0,0.0,1,0,0.14),
+ 'HD': Params('HD','HD',3.0,0.22,2,[-405,-135,135,405],0.06,0.15,0.05,0.05,1,2.5,0.10),
+ 'IN': Params('IN','IN',5.0,0.125,4,[-405,-202.5,0,202.5,405],0.18,0.14,0.07,0.2,2,3.0,0.07),
+ 'AT': Params('AT','AT',7.5,0.09,4,[-405,-202.5,0,202.5,405],0.30,0.14,0.09,0.3,2,5.0,0.05),
 }
 
 @dataclass
@@ -125,7 +126,7 @@ def select(cands, a, p, phi, P, dur):
     chosen.sort(key=lambda c: c['t'])
     return chosen
 
-def build_notes(chosen, a, p, phi, P, dur, seed):
+def build_notes(chosen, a, p, phi, P, dur, seed, choreo_ch):
     rng = np.random.default_rng(seed)
     n = len(chosen)
     types = [1] * n
@@ -134,9 +135,9 @@ def build_notes(chosen, a, p, phi, P, dur, seed):
     hold_cands = []
     for i, c in enumerate(chosen):
         if c['sus'] >= 0.45 and c['sb'] > 0:
-            e = c['t'] + min(c['sus'], 4 * P)
+            e = c['t'] + min(c['sus'], 2 * P)
             e = lattice_snap(e, phi, P, p.div, 0.05)
-            if e - c['t'] >= 0.4: hold_cands.append((c['sus'], i, e))
+            if e - c['t'] >= max(0.25, 0.5 * P): hold_cands.append((c['sus'], i, e))
     hold_cands.sort(reverse=True)
     drop = set()
     taken = []
@@ -196,12 +197,21 @@ def build_notes(chosen, a, p, phi, P, dur, seed):
         lane_of[i] = best
         if types[i] == 2: lock[best] = ends[i] + 0.05
         prev, prevt = best, c['t']
-    # lines
+    # lines and relative x from choreography
+    def beat_of(t): return t / phi if t < phi else 1.0 + (t - phi) / P
     notes = []
+    def place(t, end, typ, lane):
+        b = beat_of(t); ph = choreo.phrase_at(choreo_ch, b)
+        line = choreo.line_for(choreo_ch, b, lane, L)
+        if typ == 2:
+            if not choreo.active_through(choreo_ch, line, b, beat_of(end)):
+                end = phi + (ph.t1 - 1.0) * P - 0.05
+                if end - t < 0.25: typ = 1; end = t
+        else: end = t
+        rel = p.lanes[lane] * ph.lane_scale - choreo_ch['tracks'][line].x.at(b)
+        return Note(t, end, typ, max(-640.0, min(640.0, rel)), line)
     for i, c in enumerate(chosen):
-        beat = (c['t'] - phi) / P
-        line = 0 if p.lines == 1 else (int(math.floor(beat / 8)) % 2)
-        notes.append(Note(c['t'], ends[i], types[i], p.lanes[lane_of[i]], line))
+        notes.append(place(c['t'], ends[i], types[i], lane_of[i]))
     # chords
     if p.chord > 0:
         ss = np.array([c['s'] for c in chosen])
@@ -213,8 +223,9 @@ def build_notes(chosen, a, p, phi, P, dur, seed):
                 opts = [l for l in range(L) if abs(l - a_) >= 2 and lock[l] <= c['t'] - 0.02 + 1e-9]
                 busy = any(abs(c['t'] - o.t) < 1e-6 and o is not notes[i] for o in notes[max(0, i - 2):i + 3])
                 if opts and not busy and k < int(p.chord * n):
-                    ln = opts[int(rng.integers(len(opts)))]
-                    notes.append(Note(c['t'], c['t'], 1, p.lanes[ln], notes[i].line)); k += 1
+                    mirror = L - 1 - a_
+                    ln = mirror if (mirror in opts and rng.random() < 0.6) else opts[int(rng.integers(len(opts)))]
+                    notes.append(place(c['t'], c['t'], 1, ln)); k += 1
     notes.sort(key=lambda x: (x.t, x.x))
     return notes
 
@@ -235,6 +246,8 @@ def make_chart(a, p, dur, seed=7):
     phi = norm_phase(a['phi'], a['P']); P = a['P']
     cands = features(a, dur, p.thr)
     chosen = select(cands, a, p, phi, P, dur)
-    notes = build_notes(chosen, a, p, phi, P, dur, seed)
+    tb = lambda t: t / phi if t < phi else 1.0 + (t - phi) / P
+    cho = choreo.build(a['rms'], FPS, p, phi, P, dur, np.random.default_rng(seed + 101), a['bpm'], tb, [tb(c['t']) for c in chosen])
+    notes = build_notes(chosen, a, p, phi, P, dur, seed, cho)
     diff, lvl = level_of(notes, dur)
-    return dict(p=p, notes=notes, bpm=a['bpm'], phi=phi, P=P, dur=dur, difficulty=diff, level=lvl)
+    return dict(p=p, notes=notes, choreo=cho, bpm=a['bpm'], phi=phi, P=P, dur=dur, difficulty=diff, level=lvl)

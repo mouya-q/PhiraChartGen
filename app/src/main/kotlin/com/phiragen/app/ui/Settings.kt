@@ -181,6 +181,6 @@ private fun PSwitchRowLike(title: String, summary: String, onClick: () -> Unit) 
             Txt(title, style = MiuixTheme.textStyles.body1)
             Summary(summary)
         }
-        PTextButton("查看", onClick)
+        PTextButton("›", onClick)
     }
 }
