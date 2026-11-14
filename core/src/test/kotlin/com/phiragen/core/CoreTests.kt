@@ -322,10 +322,12 @@ class GeneratorTest {
         )
         val c = ChartGenerator.generate(analysis, DifficultyProfile.AT, GenerationOptions(guidance = g))
         assertEquals(com.phiragen.core.chart.PhraseStyle.SPIN, c.choreography.phrases[1].style)
-        // 第一个乐句指定了空特效列表, 因此不应再自动出现扫线
+        // 第一个乐句指定了空特效列表, 因此该乐句区间内不应出现任何装饰线;
+        // 窗口取到乐句结束前一点, 避免把相邻乐句提前 0.06 拍布局的扫线算进来
         val firstBeat = c.choreography.phrases[0].startBeat
+        val windowEnd = c.choreography.phrases[0].endBeat - 0.1
         val decorInFirst = c.choreography.tracks.filter { !it.carriesNotes }
-            .count { t -> t.alpha.segs.any { it.start >= firstBeat - 0.1 && it.start < firstBeat + 8 && it.to > 1.0 } }
+            .count { t -> t.alpha.segs.any { it.start >= firstBeat - 0.1 && it.start < windowEnd && it.to > 1.0 } }
         assertEquals(0, decorInFirst)
     }
 
@@ -564,7 +566,7 @@ class AiTest {
     @Test
     fun summaryContainsNoFileOrPersonalData() {
         val s = AiEnhancer.buildSummary(analysis)
-        assertTrue(s.contains("bpm") && s.contains("segments"))
+        assertTrue(s.contains("bpm") && s.contains("phrases"))
         assertTrue(!s.contains("/") && !s.contains("uri", ignoreCase = true))
     }
 }

@@ -7,5 +7,6 @@
         <item name="android:windowLightStatusBar">true</item>
     </style>
     <color name="window_bg">#FFF7F7F7</color>
-    <color name="ic_bg">#FFFFFFFF</color>
+    <!-- 与新图标前景图的白色边缘一致, 保证圆形/圆角蒙版下无接缝 -->
+    <color name="ic_bg">#FFFDFDFD</color>
 </resources>
