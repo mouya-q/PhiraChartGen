@@ -123,10 +123,15 @@ object ChoreographyBuilder {
     /** 以整圈为基准的朝向, 避免旋转角度在多个乐句间漂移 */
     private fun baseRot(v: Double) = Math.round(v / 360.0) * 360.0
 
+    /** 有 AI 指定的特效列表时以它为准, 否则使用离线规则 */
+    private fun wantsEffect(cue: Set<EffectType>?, type: EffectType, auto: Boolean): Boolean =
+        if (cue != null) type in cue else auto
+
     private fun steady(tr: Track, t0: Double, t1: Double, d: Difficulty, pulse: Boolean) {
         val rb = baseRot(tr.rotation.value)
         tr.x.to(t0 + 1, 0.0)
         tr.x.hold(t1)
+        if (abs(tr.y.value - BASE_Y) > 1.0) tr.y.to(t0 + 1.0, BASE_Y)
         val amp = tilt(d)
         val depth = dip(d) * (if (pulse) 1.25 else 1.0)
         val stride = if (pulse) 1.0 else 2.0
@@ -157,6 +162,7 @@ object ChoreographyBuilder {
     fun build(
         a: AnalysisResult, p: DifficultyProfile, phi: Double, beatSec: Double, durationSec: Double,
         bpm: Double, rng: Random, toBeat: (Double) -> Double, noteBeats: DoubleArray,
+        guidance: Guidance = Guidance.NONE,
     ): Choreography {
         val d = p.difficulty
         val endBeat0 = toBeat(durationSec) + 8.0
@@ -179,8 +185,19 @@ object ChoreographyBuilder {
             val t0 = 1.0 + 8 * i
             val t1 = t0 + 8
             val e = energies[i]
+            val cue = guidance.phrases[i]
             var style = PhraseStyle.STEADY
-            if ((d == Difficulty.IN || d == Difficulty.AT) && e > 0.85 && sincePiece >= 3 && rng.nextDouble() < 0.5) {
+            val highLevel = d == Difficulty.IN || d == Difficulty.AT
+            val wanted = cue?.style
+            if (wanted != null) {
+                // AI 指定的风格: 拆线与旋转只允许高难度, 且与上一次大动作间隔至少 3 个乐句
+                style = when (wanted) {
+                    PhraseStyle.PULSE -> if (d == Difficulty.EZ) PhraseStyle.STEADY else PhraseStyle.PULSE
+                    PhraseStyle.SPLIT, PhraseStyle.SPIN ->
+                        if (highLevel && sincePiece >= 3) wanted else if (d != Difficulty.EZ) PhraseStyle.PULSE else PhraseStyle.STEADY
+                    else -> PhraseStyle.STEADY
+                }
+            } else if (highLevel && e > 0.85 && sincePiece >= 3 && rng.nextDouble() < 0.5) {
                 style = if (rng.nextInt(2) == 0) PhraseStyle.SPLIT else PhraseStyle.SPIN
             } else if (e > 0.6 && d != Difficulty.EZ) {
                 style = PhraseStyle.PULSE
@@ -278,7 +295,8 @@ object ChoreographyBuilder {
                 val e = ph.energy
                 val prevE = if (i > 0) phrases[i - 1].energy else 0.0
                 val t0 = ph.startBeat
-                if (i < 2 || (e > 0.9 && (d == Difficulty.IN || d == Difficulty.AT) && i % 2 == 0)) {
+                val cueEffects = guidance.phrases[i]?.effects
+                if (wantsEffect(cueEffects, EffectType.SWEEPERS, i < 2 || (e > 0.9 && (d == Difficulty.IN || d == Difficulty.AT) && i % 2 == 0))) {
                     // 节拍闪烁扫线: 近竖直的线每 2 拍从一侧扫入, 透明度每拍脉冲一次
                     for (side in doubleArrayOf(1.0, -1.0)) {
                         val t = getLine(t0 - 0.06, 8.06) ?: break
@@ -293,7 +311,7 @@ object ChoreographyBuilder {
                         t.busyUntil = t0 + 8.0
                     }
                 }
-                if ((e - prevE > 0.25 || e > 0.9) && i - lastBurst >= 2 && i > 0) {
+                if (wantsEffect(cueEffects, EffectType.WHOOSH, (e - prevE > 0.25 || e > 0.9) && i - lastBurst >= 2 && i > 0)) {
                     // 段落开头的对称呼啸扫线
                     for (side in doubleArrayOf(1.0, -1.0)) {
                         val t = getLine(t0 - 0.06, 1.81) ?: break
@@ -307,7 +325,7 @@ object ChoreographyBuilder {
                     mirror = -mirror
                     lastBurst = i
                 }
-                if (e > 0.75 && (d == Difficulty.IN || d == Difficulty.AT)) {
+                if (wantsEffect(cueEffects, EffectType.ECHO, e > 0.75 && (d == Difficulty.IN || d == Difficulty.AT))) {
                     // 回声线: 从主线位置向下扩散并淡出, 每 1.5 拍一次
                     val t = getLine(t0 - 0.06, 7.56)
                     if (t != null) {

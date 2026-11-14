@@ -73,3 +73,18 @@ Android SDK. 最近一次全绿运行是
 - **这些改动尚未经过 CI 编译与测试**, 需要在下一次 CI 里确认. 算法与导出结构已在 Python 原型中验证 (通道连续, 音符不出屏, 12 个样例包通过校验脚本), 但 Kotlin 代码没有被编译过
 - 新增依赖: 无
 
+## 第三轮更新 (AI, 轨道模型, 速度估计, 动效, Rust)
+
+**以下改动尚未经过 CI 编译与测试**, 需要在下一次 CI 里确认:
+
+| 范围 | 内容 |
+| --- | --- |
+| `core` | `LaneModel.kt`, `LaneModelData.kt`, `Choreography.kt` 调整, `Generator.kt` 轨道分配重写, `Analysis.kt` 速度估计重写, `NativeDsp.kt`, `ai/Ai.kt` 重写, 测试 |
+| `app` | 新增 `ui/PageHost.kt`, `Kit.kt` 增加交互组件, `MainActivity.kt` 的 `Root` 改用 `PageHost`, `Screens.kt`, `Settings.kt`, `About.kt`, `Pipeline.kt`, `MainViewModel.kt` 小改 |
+| `native/pcg-dsp` | 全新的 Rust 模块, 从未编译 |
+| CI | 新增 `native-engine` 任务, `core-tests` 与 `build-apk` 增加对原生库的可选依赖 |
+
+**已验证** (Python 原型, 非 Kotlin): 判定线每条通道首尾相接且数值连续, 25354 个音符 (10 首真实歌曲 × 4 个难度) 全部落在屏幕内且位于可见的承载线上; 轨道左右平衡 40/20/40; 速度估计 10/10; 12 个样例包通过校验脚本
+
+**未验证**: Kotlin 编译与单元测试, Rust 编译与测试, Kotlin 与 Rust 的对照测试, 以及所有界面改动在真机上的效果
+

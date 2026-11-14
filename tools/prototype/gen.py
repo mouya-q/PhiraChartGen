@@ -20,6 +20,48 @@ class Note:
     t: float; end: float; type: int; x: float; line: int; fake: int = 0
 # type: 1 tap 2 hold 3 flick 4 drag
 
+
+import json, os
+_LANE_MODEL = None
+CLASS_X = np.array([-405.0, -202.5, 0.0, 202.5, 405.0])
+def lane_model():
+    global _LANE_MODEL
+    if _LANE_MODEL is None:
+        m = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lane_model.json')))
+        _LANE_MODEL = dict(mean=np.array(m['mean']), std=np.array(m['std']), w=np.array(m['weights']), b=np.array(m['bias']))
+    return _LANE_MODEL
+
+def class_map(lanes):
+    """5 个训练类别映射到当前难度的轨道: 每个类别分给最近的轨道, 距离相同则平分"""
+    M = np.zeros((5, len(lanes)))
+    for c, cx in enumerate(CLASS_X):
+        d = np.abs(np.array(lanes) - cx); near = np.where(np.abs(d - d.min()) < 1e-9)[0]
+        M[c, near] = 1.0 / len(near)
+    return M
+
+def lane_class(lanes, lane):
+    return int(np.argmin(np.abs(CLASS_X - lanes[lane])))
+
+def lane_features(a, t, prev, prev2, prev_t, p90, lanes=None):
+    n = len(a['env']); f = int(np.clip(t * FPS - 0.75 * N / SR * FPS, 0, n - 1))
+    lo = max(0, f - 2); hi = min(n, f + 3)
+    env = float(a['env'][lo:hi].max()); l = float(a['low'][lo:hi].max()); m = float(a['mid'][lo:hi].max()); h = float(a['high'][lo:hi].max())
+    tot = l + m + h + 1e-9; j = min(n - 1, f + 2)
+    cen = float(np.clip((math.log2(max(float(a['centroid'][j]), 60)) - math.log2(100)) / (math.log2(5000) - math.log2(100)), 0, 1))
+    row = a['mag'][j, 3:190]; dom = float(np.argmax(row)) / 187.0; tilt = float(row[:60].sum() / (row.sum() + 1e-9))
+    loud = float(a['rms'][j]) / p90
+    dt = 1.0 if prev_t is None else min(2.0, max(0.05, t - prev_t))
+    v = [env, l / tot, m / tot, h / tot, cen, dom, tilt, loud, math.log(dt) / math.log(40) + 1.0]
+    oh = [0.0] * 5; oh2 = [0.0] * 5
+    if prev is not None: oh[LANE_CLASS_OF[prev]] = 1.0
+    if prev2 is not None: oh2[LANE_CLASS_OF[prev2]] = 1.0
+    reset = 1.0 if (prev_t is None or t - prev_t > 1.5) else 0.0
+    return np.array(v + oh + oh2 + [reset])
+
+def lane_probs(mp, f):
+    z = (f - mp['mean']) / mp['std']; lg = mp['w'] @ z + mp['b']; e = np.exp(lg - lg.max()); return e / e.sum()
+LANE_CLASS_OF = {}
+
 def norm_phase(phi, P):
     phi = phi % P
     return phi if phi >= 0.02 else phi + P
@@ -173,30 +215,40 @@ def build_notes(chosen, a, p, phi, P, dur, seed, choreo_ch):
             for i in r[1:]:
                 if budget <= 0: break
                 types[i] = 4; budget -= 1
-    # lanes
+    # lanes: 小模型 (多项逻辑回归, 由玩家谱训练) 给出轨道概率, 再叠加规则约束
     L = len(p.lanes)
     lane_of = [0] * n
     lock = [-1.0] * L
-    prev = L // 2; prevt = -9
-    same = 0
+    hold_spans = []
+    mp = lane_model()
+    LANE_CLASS_OF.clear(); LANE_CLASS_OF.update({ln: lane_class(p.lanes, ln) for ln in range(L)})
+    cmap = class_map(p.lanes)
+    p90 = float(np.percentile(a['rms'], 90)) + 1e-9
+    prev = prev2 = None; prev_t = None; recent = []
     for i, c in enumerate(chosen):
-        pref = c['cen'] * (L - 1)
-        best, bs = None, 1e9
+        f = lane_features(a, c['t'], prev, prev2, prev_t, p90)
+        pr = lane_probs(mp, f) @ cmap
         for ln in range(L):
-            if lock[ln] > c['t'] - 0.02: continue
-            sc = abs(ln - pref) * 1.0 + rng.random() * 0.35
-            if c['t'] - prevt < 0.3 and ln == prev: sc += 2.5
-            elif ln == prev: sc += 0.8
-            jump = abs(ln - prev)
-            if types[i] == 4: sc += 3.0 * (jump > 1) + 0.5 * jump
-            else:
-                lim = 2 if L > 4 else 1
-                if jump > lim: sc += 1.5 * (jump - lim)
-            if sc < bs: bs, best = sc, ln
-        if best is None: best = int(np.argmin(lock))
+            if lock[ln] > c['t'] - 0.02: pr[ln] = 0.0
+        if prev is not None and prev_t is not None:
+            gap = c['t'] - prev_t
+            if p.key in ('EZ', 'HD') and gap < 0.3: pr[prev] *= 0.4
+            if types[i] == 4 and prev is not None:
+                for ln in range(L):
+                    if abs(ln - prev) > 1: pr[ln] *= 0.05
+        # 左右平衡: 最近 24 个音符偏向一侧时, 轻微拉回另一侧
+        if recent:
+            bal = float(np.mean([(r - (L - 1) / 2.0) for r in recent[-24:]])) / ((L - 1) / 2.0)
+            for ln in range(L):
+                pr[ln] *= math.exp(-1.2 * bal * ((ln - (L - 1) / 2.0) / ((L - 1) / 2.0)))
+        if pr.sum() <= 1e-9:
+            best = int(np.argmin(lock))
+        else:
+            pr = pr / pr.sum(); best = int(rng.choice(L, p=pr))
         lane_of[i] = best
-        if types[i] == 2: lock[best] = ends[i] + 0.05
-        prev, prevt = best, c['t']
+        if types[i] == 2:
+            lock[best] = ends[i] + 0.05; hold_spans.append((best, c['t'], ends[i] + 0.05))
+        prev2 = prev; prev = best; prev_t = c['t']; recent.append(best)
     # lines and relative x from choreography
     def beat_of(t): return t / phi if t < phi else 1.0 + (t - phi) / P
     notes = []
@@ -220,7 +272,7 @@ def build_notes(chosen, a, p, phi, P, dur, seed, choreo_ch):
         for i, c in enumerate(chosen):
             if types[i] in (1, 3) and c['s'] >= thr and rng.random() < p.chord / 0.15 * 0.6:
                 a_ = lane_of[i]
-                opts = [l for l in range(L) if abs(l - a_) >= 2 and lock[l] <= c['t'] - 0.02 + 1e-9]
+                opts = [l for l in range(L) if abs(l - a_) >= 2 and not any(sp[0] == l and c['t'] > sp[1] - 0.02 and c['t'] < sp[2] for sp in hold_spans)]
                 busy = any(abs(c['t'] - o.t) < 1e-6 and o is not notes[i] for o in notes[max(0, i - 2):i + 3])
                 if opts and not busy and k < int(p.chord * n):
                     mirror = L - 1 - a_

@@ -109,3 +109,27 @@ keyPassword=...
   单独升级 Compose 会造成 `NoSuchMethodError` 之类的运行期崩溃, 两者要一起升.
 - **AGP 与 Gradle 版本不匹配**: 以 `libs.versions.toml` 与 `gradle/wrapper` 中的版本为准, 同步升级.
 - **内存不足**: 在 `gradle.properties` 中调大 `org.gradle.jvmargs`.
+
+## 原生分析引擎 (可选)
+
+`native/pcg-dsp` 是 Rust 实现的分析引擎. 没有它应用照常工作, 只是使用 Kotlin 引擎
+
+```
+cd native/pcg-dsp
+cargo test
+cargo build --release          # 主机库, 供 :core:test 的对照测试加载
+cargo install cargo-ndk --locked
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o ../../app/src/main/jniLibs build --release
+```
+
+库放进 `app/src/main/jniLibs` 后重新构建 APK. CI 的 `native-engine` 任务会自动完成这些步骤并把库打进 APK, 该任务失败时 APK 照常构建
+
+## 重新训练轨道模型
+
+```
+pip install numpy scikit-learn
+python3 tools/train/train_lane_model.py <谱面目录> --kotlin core/src/main/kotlin/com/phiragen/core/chart/LaneModelData.kt
+```
+
+谱面目录下每个子目录放一张 RPE 谱的 json 和对应音频, 需要 ffmpeg

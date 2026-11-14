@@ -7,6 +7,7 @@ import com.phiragen.core.audio.PeakPicker
 import com.phiragen.core.audio.Stats
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.exp
 import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
@@ -29,10 +30,23 @@ data class Onset(
     val frame: Int,
 )
 
-/** AI 或用户给出的分段编排倾向, 只做倍率修正, 不改变音符的时间来源 */
+/** 装饰特效, 手法来自玩家谱研究 */
+enum class EffectType {
+    /** 节拍闪烁扫线 */
+    SWEEPERS,
+    /** 段落开头的对称呼啸扫线 */
+    WHOOSH,
+    /** 向下扩散并淡出的回声线 */
+    ECHO,
+}
+
+/** 针对一个乐句 (8 拍) 的编排建议, 字段为空表示沿用离线规则 */
+data class PhraseCue(val density: Double? = null, val style: PhraseStyle? = null, val effects: Set<EffectType>? = null)
+
+/** AI 或用户给出的分段倾向, 只做倍率修正与风格选择, 不改变音符的时间来源 */
 data class GuidanceWindow(val startSec: Double, val endSec: Double, val density: Double)
 
-class Guidance(val windows: List<GuidanceWindow>) {
+class Guidance(val windows: List<GuidanceWindow>, val phrases: Map<Int, PhraseCue> = emptyMap()) {
     fun densityAt(sec: Double): Double {
         for (w in windows) if (sec >= w.startSec && sec < w.endSec) return w.density.coerceIn(0.3, 1.6)
         return 1.0
@@ -64,7 +78,7 @@ object ChartGenerator {
         if (chosen.isEmpty()) throw AnalysisException("没有检测到足够的节奏起伏, 请换一段节奏更明显的音频")
         val toBeat = { s: Double -> if (s < phi) s / phi else 1.0 + (s - phi) / beat }
         val noteBeats = DoubleArray(chosen.size) { toBeat(chosen[it].time) }
-        val choreo = ChoreographyBuilder.build(a, profile, phi, beat, dur, a.bpm, Random(options.seed + 101), toBeat, noteBeats)
+        val choreo = ChoreographyBuilder.build(a, profile, phi, beat, dur, a.bpm, Random(options.seed + 101), toBeat, noteBeats, options.guidance)
         val built = buildNotes(chosen, a, profile, phi, beat, dur, options, choreo, toBeat)
         val (value, level) = estimateLevel(built, dur)
         return Chart(profile, built, a.bpm, phi, dur, value, level, choreo, options.noteSpeed)
@@ -276,44 +290,64 @@ object ChartGenerator {
             }
         }
 
-        // 轨道分配
+        // 轨道分配: 小模型给出各轨道概率, 再叠加规则约束 (长按占用, 快速连打不重复, 拖动只走相邻轨道, 左右平衡)
         val laneCount = p.lanes.size
         val laneOf = IntArray(n)
         val lock = DoubleArray(laneCount) { -1.0 }
         val holdSpans = ArrayList<Triple<Int, Double, Double>>()
-        var prev = laneCount / 2
-        var prevT = -9.0
+        val classMap = LaneModel.classMap(p.lanes)
+        val laneClass = IntArray(laneCount) { LaneModel.classOf(p.lanes[it]) }
+        val p90 = Stats.percentile(a.rms, 90.0) + 1e-9
+        var prev = -1
+        var prev2 = -1
+        var prevT = Double.NaN
+        val recent = ArrayList<Int>()
+        val mid = (laneCount - 1) / 2.0
         for (i in 0 until n) {
             val c = chosen[i]
-            val pref = c.brightness * (laneCount - 1)
-            var best = -1
-            var bestScore = Double.MAX_VALUE
+            val feats = LaneModel.features(a, c.time, if (prev >= 0) laneClass[prev] else -1, if (prev2 >= 0) laneClass[prev2] else -1, prevT, p90)
+            val cp = LaneModel.probs(feats)
+            val pr = DoubleArray(laneCount)
             for (ln in 0 until laneCount) {
-                if (lock[ln] > c.time - 0.02) continue
-                var sc = abs(ln - pref) + rng.nextDouble() * 0.35
-                if (c.time - prevT < 0.3 && ln == prev) sc += 2.5 else if (ln == prev) sc += 0.8
-                val jump = abs(ln - prev)
-                if (types[i] == NoteType.DRAG) {
-                    if (jump > 1) sc += 3.0
-                    sc += 0.5 * jump
-                } else {
-                    val lim = if (laneCount > 4) 2 else 1
-                    if (jump > lim) sc += 1.5 * (jump - lim)
-                }
-                if (sc < bestScore) { bestScore = sc; best = ln }
+                var s = 0.0
+                for (k in cp.indices) s += cp[k] * classMap[k][ln]
+                pr[ln] = s
             }
-            if (best < 0) {
+            for (ln in 0 until laneCount) if (lock[ln] > c.time - 0.02) pr[ln] = 0.0
+            if (prev >= 0 && !prevT.isNaN()) {
+                val gap = c.time - prevT
+                if ((p.difficulty == Difficulty.EZ || p.difficulty == Difficulty.HD) && gap < 0.3) pr[prev] *= 0.4
+                if (types[i] == NoteType.DRAG) for (ln in 0 until laneCount) if (abs(ln - prev) > 1) pr[ln] *= 0.05
+            }
+            if (recent.isNotEmpty() && mid > 0) {
+                // 最近 24 个音符偏向一侧时, 轻微拉回另一侧
+                val tail = recent.takeLast(24)
+                val bal = tail.map { it - mid }.average() / mid
+                for (ln in 0 until laneCount) pr[ln] *= exp(-1.2 * bal * ((ln - mid) / mid))
+            }
+            val total = pr.sum()
+            var best: Int
+            if (total <= 1e-9) {
                 var mi = 0
                 for (k in 1 until laneCount) if (lock[k] < lock[mi]) mi = k
                 best = mi
+            } else {
+                var r = rng.nextDouble() * total
+                best = laneCount - 1
+                for (ln in 0 until laneCount) {
+                    r -= pr[ln]
+                    if (r <= 0) { best = ln; break }
+                }
             }
             laneOf[i] = best
             if (types[i] == NoteType.HOLD) {
                 lock[best] = ends[i] + 0.05
                 holdSpans.add(Triple(best, c.time, ends[i] + 0.05))
             }
+            prev2 = prev
             prev = best
             prevT = c.time
+            recent.add(best)
         }
 
         // 判定线分配: 轨道按乐句分给可见的判定线, 横坐标补偿判定线的位置, 使音符在命中时落在固定轨道上

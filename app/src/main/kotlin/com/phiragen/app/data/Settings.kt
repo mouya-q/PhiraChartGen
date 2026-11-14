@@ -31,6 +31,8 @@ data class AppSettings(
     val charter: String = "PhiraChartGen",
     val blurEnabled: Boolean = true,
     val transitionBlurEnabled: Boolean = true,
+    /** 优先使用 Rust 原生分析引擎, 不可用时自动使用 Kotlin 实现 */
+    val nativeEngine: Boolean = true,
     val ai: AiSettings = AiSettings(),
 )
 
@@ -53,6 +55,7 @@ class SettingsStore(context: Context) {
             charter = sp.getString("charter", "PhiraChartGen")?.take(40) ?: "PhiraChartGen",
             blurEnabled = sp.getBoolean("blur", true),
             transitionBlurEnabled = sp.getBoolean("transition_blur", true),
+            nativeEngine = sp.getBoolean("native_engine", true),
             ai = AiSettings(
                 enabled = sp.getBoolean("ai_enabled", false),
                 consented = sp.getBoolean("ai_consent", false),
@@ -76,6 +79,7 @@ class SettingsStore(context: Context) {
             .putString("charter", s.charter)
             .putBoolean("blur", s.blurEnabled)
             .putBoolean("transition_blur", s.transitionBlurEnabled)
+            .putBoolean("native_engine", s.nativeEngine)
             .putBoolean("ai_enabled", s.ai.enabled)
             .putBoolean("ai_consent", s.ai.consented)
             .putString("ai_url", s.ai.baseUrl)

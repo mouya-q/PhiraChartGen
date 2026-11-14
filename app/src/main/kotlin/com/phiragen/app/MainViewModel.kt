@@ -180,7 +180,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun runGeneration(audio: AudioInfo, reuse: AnalysisResult?) {
         try {
-            val a = reuse ?: Pipeline.analyze(ctx, audio) { p -> _state.update { it.copy(progress = p * 0.7f) } }
+            val a = reuse ?: Pipeline.analyze(ctx, audio, _state.value.settings.nativeEngine) { p -> _state.update { it.copy(progress = p * 0.7f) } }
             analysis = a
             _state.update { it.copy(bpm = a.bpm, durationSec = a.durationSec) }
             if (reuse == null) {

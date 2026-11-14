@@ -1,5 +1,20 @@
 package com.phiragen.app.ui
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -159,7 +174,7 @@ fun PTextButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier
 fun PTopBar(title: String, onBack: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
     TopAppBar(
         title = title,
-        navigationIcon = {},
+        navigationIcon = { if (onBack != null) BackButton(onBack) },
         actions = actions,
     )
 }
@@ -296,11 +311,13 @@ fun SurfaceCard(dark: Boolean, modifier: Modifier = Modifier, content: @Composab
 @Composable
 fun Chip(text: String, color: Color, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(13.dp)
+    // 选中状态用 0 到 1 的进度平滑过渡, 背景与描边同步变化
+    val t by animateFloatAsState(if (selected) 1f else 0f, tween(220), label = "chipSelected")
     Box(
-        modifier.clip(shape)
-            .background(color.copy(alpha = if (selected) 0.14f else 0.07f))
-            .border(1.dp, color.copy(alpha = if (selected) 0.32f else 0.12f), shape)
-            .clickable(onClick = onClick)
+        modifier.pressable(onClick, pressedScale = 0.94f)
+            .clip(shape)
+            .background(color.copy(alpha = 0.07f + 0.07f * t))
+            .border(1.dp, color.copy(alpha = 0.12f + 0.20f * t), shape)
             .padding(horizontal = 10.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -365,5 +382,104 @@ fun IconMusicMark(modifier: Modifier = Modifier) {
         drawRoundRect(c, androidx.compose.ui.geometry.Offset(w * .43f, h * .04f), androidx.compose.ui.geometry.Size(w * .12f, h * .65f), androidx.compose.ui.geometry.CornerRadius(w * .06f))
         drawRoundRect(c, androidx.compose.ui.geometry.Offset(w * .70f, h * .22f), androidx.compose.ui.geometry.Size(w * .12f, h * .47f), androidx.compose.ui.geometry.CornerRadius(w * .06f))
         drawRoundRect(c.copy(alpha = .72f), androidx.compose.ui.geometry.Offset(w * .08f, h * .78f), androidx.compose.ui.geometry.Size(w * .84f, h * .08f), androidx.compose.ui.geometry.CornerRadius(w * .04f))
+    }
+}
+
+// ------------------------------------------------------------ 交互组件
+
+/**
+ * 整块可点击, 带按压反馈: 轻微缩小并变暗. 点击区域是整个容器, 而不是其中的某个小按钮.
+ * 放在 clip, background 之前使用, 缩放才会连同背景一起生效
+ */
+@Composable
+fun Modifier.pressable(
+    onClick: () -> Unit,
+    pressedScale: Float = 0.975f,
+    pressedAlpha: Float = 1f,
+    enabled: Boolean = true,
+): Modifier {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) pressedScale else 1f,
+        spring(dampingRatio = 0.62f, stiffness = 650f),
+        label = "pressScale",
+    )
+    val alpha by animateFloatAsState(
+        if (pressed) pressedAlpha else 1f,
+        spring(stiffness = 700f),
+        label = "pressAlpha",
+    )
+    return this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            this.alpha = alpha
+        }
+        .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
+}
+
+/** 用线条绘制的箭头, 只作为视觉提示, 点击由外层容器处理 */
+@Composable
+fun ChevronIcon(color: Color, modifier: Modifier = Modifier, direction: Int = 1, iconSize: Dp = 14.dp) {
+    Canvas(modifier.size(iconSize)) {
+        val w = size.width
+        val h = size.height
+        val path = Path().apply {
+            if (direction >= 0) {
+                moveTo(w * 0.32f, h * 0.12f); lineTo(w * 0.72f, h * 0.5f); lineTo(w * 0.32f, h * 0.88f)
+            } else {
+                moveTo(w * 0.68f, h * 0.12f); lineTo(w * 0.28f, h * 0.5f); lineTo(w * 0.68f, h * 0.88f)
+            }
+        }
+        drawPath(path, color, style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+/** 列表式导航行: 整行可点击, 右侧箭头只是指示 */
+@Composable
+fun NavRow(title: String, summary: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth()
+            .pressable(onClick, pressedScale = 1f, pressedAlpha = 0.55f)
+            .padding(horizontal = 18.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Txt(title, style = MiuixTheme.textStyles.body1)
+            if (summary != null) Summary(summary)
+        }
+        Spacer(Modifier.width(10.dp))
+        ChevronIcon(MiuixTheme.colorScheme.onSurfaceVariantSummary)
+    }
+}
+
+/** 顶部返回按钮: 点击区域 44dp */
+@Composable
+fun BackButton(onClick: () -> Unit) {
+    Box(
+        Modifier.padding(start = 8.dp).size(44.dp).clip(CircleShape).pressable(onClick, pressedScale = 0.88f),
+        contentAlignment = Alignment.Center,
+    ) {
+        ChevronIcon(MiuixTheme.colorScheme.onSurface, direction = -1, iconSize = 18.dp)
+    }
+}
+
+/** 页面右上角的文字入口, 整个胶囊都可点击 */
+@Composable
+fun HeaderPill(text: String, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        Modifier.pressable(onClick, pressedScale = 0.93f)
+            .clip(shape)
+            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Txt(
+            text,
+            style = MiuixTheme.textStyles.body2.copy(fontWeight = FontWeight.SemiBold),
+            color = MiuixTheme.colorScheme.primary,
+        )
     }
 }

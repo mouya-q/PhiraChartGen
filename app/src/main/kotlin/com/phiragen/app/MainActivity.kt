@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
 import com.phiragen.app.data.DiagLog
+import com.phiragen.app.ui.PageHost
 import com.phiragen.app.ui.AboutScreen
 import com.phiragen.app.ui.AppTheme
 import com.phiragen.app.ui.Banner
@@ -100,17 +101,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         var exportIndex by remember { mutableIntStateOf(-1) }
-        var displayedScreen by remember { mutableStateOf(st.screen) }
-        var lastBackStack by remember { mutableStateOf(st.back) }
-        var outgoingScreen by remember { mutableStateOf<Screen?>(null) }
-        var transitionMode by remember { mutableIntStateOf(1) }
-        var skipNextTransition by remember { mutableStateOf(false) }
-        var predictiveDirection by remember { mutableFloatStateOf(1f) }
-        var predictiveCommitted by remember { mutableStateOf(false) }
-        var predictiveFrom by remember { mutableStateOf<Screen?>(null) }
-        var predictiveTarget by remember { mutableStateOf<Screen?>(null) }
-        val navigationProgress = remember { Animatable(1f) }
-        val predictiveProgress = remember { Animatable(0f) }
 
         val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
@@ -134,91 +124,6 @@ class MainActivity : ComponentActivity() {
             createDoc.launch(vm.suggestedName(index))
         }
 
-        LaunchedEffect(st.screen) {
-            if (st.screen != displayedScreen) {
-                val previous = displayedScreen
-                val isPop = lastBackStack.lastOrNull { it !is Screen.Working } == st.screen
-                val skip = skipNextTransition
-                skipNextTransition = false
-
-                if (!skip) {
-                    outgoingScreen = if (previous is Screen.Working) {
-                        lastBackStack.lastOrNull { it !is Screen.Working } ?: previous
-                    } else {
-                        previous
-                    }
-                    transitionMode = if (isPop) -1 else 1
-                    navigationProgress.snapTo(0f)
-                }
-
-                displayedScreen = st.screen
-                lastBackStack = st.back
-
-                if (skip) {
-                    outgoingScreen = null
-                    navigationProgress.snapTo(1f)
-                } else {
-                    navigationProgress.animateTo(
-                        targetValue = 1f,
-                        animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-                    )
-                    outgoingScreen = null
-                }
-            } else {
-                lastBackStack = st.back
-            }
-        }
-
-        PredictiveBackHandler(enabled = st.back.isNotEmpty() || st.screen is Screen.Working) { events ->
-            try {
-                events.collect { event ->
-                    if (predictiveProgress.value <= 0.001f) {
-                        predictiveDirection = if (event.touchX > widthPxForBack() * 0.5f) -1f else 1f
-                    }
-                    predictiveProgress.snapTo(event.progress)
-                }
-                val target = st.back.lastOrNull { it !is Screen.Working }
-                if (predictiveProgress.value > 0.001f && target != null) {
-                    predictiveFrom = st.screen
-                    predictiveTarget = target
-                    predictiveCommitted = true
-                    skipNextTransition = true
-                }
-                vm.back()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } finally {
-                withContext(NonCancellable) {
-                    if (predictiveCommitted) {
-                        predictiveProgress.animateTo(
-                            targetValue = 1f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMedium,
-                            ),
-                        )
-                        predictiveTarget?.let { target ->
-                            withTimeoutOrNull(2000) {
-                                vm.state.first { it.screen == target }
-                            }
-                        }
-                        predictiveProgress.snapTo(0f)
-                        predictiveCommitted = false
-                        predictiveFrom = null
-                        predictiveTarget = null
-                    } else {
-                        predictiveProgress.animateTo(
-                            targetValue = 0f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMedium,
-                            ),
-                        )
-                    }
-                }
-            }
-        }
-
         LaunchedEffect(st.shareUri) {
             val uri = st.shareUri ?: return@LaunchedEffect
             val send = Intent(Intent.ACTION_SEND).apply {
@@ -236,123 +141,37 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-
-        val renderPage: @Composable (Screen, Modifier, Boolean) -> Unit = { target, pageModifier, isBackground ->
-            MainScreenLayer(
-                screen = target,
-                st = st,
-                dark = dark,
-                modifier = pageModifier,
-                backgroundLayer = isBackground,
-                vm = vm,
-                launchPick = launchPick,
-                launchExport = launchExport,
-                launchExportAll = { pickTree.launch(null) },
-                context = context,
-                shareLog = ::shareLog,
-            )
+        // 与 ViewModel.back() 使用同一套规则决定返回目标, 保证手势预览与实际结果一致
+        val previous = st.back.lastOrNull()
+        val backTarget: Screen? = when {
+            previous == null -> null
+            previous is Screen.Working -> st.back.lastOrNull { it !is Screen.Working } ?: Screen.Home
+            else -> previous
         }
 
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val density = LocalDensity.current
-            val widthPx = with(density) { maxWidth.toPx() }
-            val gestureProgress = predictiveProgress.value.coerceIn(0f, 1f)
-            val transition = navigationProgress.value.coerceIn(0f, 1f)
-            val backTarget = st.back.lastOrNull { it !is Screen.Working }
-
-            when {
-                predictiveCommitted && predictiveFrom != null && predictiveTarget != null -> {
-                    renderPage(
-                        predictiveTarget!!,
-                        Modifier.fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = 0.965f + 0.035f * gestureProgress
-                                scaleY = 0.965f + 0.035f * gestureProgress
-                                alpha = 0.92f + 0.08f * gestureProgress
-                            }
-                            .then(if (useTransitionBlur) Modifier.blur(8.dp * (1f - gestureProgress)) else Modifier),
-                        true,
-                    )
-                    renderPage(
-                        predictiveFrom!!,
-                        Modifier.fillMaxSize().graphicsLayer {
-                            translationX = widthPx * predictiveDirection * gestureProgress
-                            scaleX = 1f - 0.025f * gestureProgress
-                            scaleY = 1f - 0.025f * gestureProgress
-                            alpha = 1f - 0.08f * gestureProgress
-                        },
-                        false,
-                    )
-                }
-                gestureProgress > 0.001f && backTarget != null -> {
-                    renderPage(
-                        backTarget,
-                        Modifier.fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = 0.965f + 0.035f * gestureProgress
-                                scaleY = 0.965f + 0.035f * gestureProgress
-                                alpha = 0.92f + 0.08f * gestureProgress
-                            }
-                            .then(if (useTransitionBlur) Modifier.blur(8.dp * (1f - gestureProgress)) else Modifier),
-                        true,
-                    )
-                    renderPage(
-                        st.screen,
-                        Modifier.fillMaxSize().graphicsLayer {
-                            translationX = widthPx * predictiveDirection * gestureProgress
-                            scaleX = 1f - 0.025f * gestureProgress
-                            scaleY = 1f - 0.025f * gestureProgress
-                            alpha = 1f - 0.06f * gestureProgress
-                        },
-                        false,
-                    )
-                }
-                outgoingScreen != null && transition < 1f && transitionMode > 0 -> {
-                    renderPage(
-                        outgoingScreen!!,
-                        Modifier.fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = 1f - 0.035f * transition
-                                scaleY = 1f - 0.035f * transition
-                                alpha = 1f - 0.045f * transition
-                            }
-                            .then(if (useTransitionBlur) Modifier.blur(7.dp * transition) else Modifier),
-                        true,
-                    )
-                    renderPage(
-                        st.screen,
-                        Modifier.fillMaxSize().graphicsLayer {
-                            translationX = widthPx * 0.14f * (1f - transition)
-                            alpha = 0.92f + 0.08f * transition
-                        },
-                        false,
-                    )
-                }
-                outgoingScreen != null && transition < 1f && transitionMode < 0 -> {
-                    renderPage(
-                        st.screen,
-                        Modifier.fillMaxSize()
-                            .graphicsLayer {
-                                scaleX = 0.965f + 0.035f * transition
-                                scaleY = 0.965f + 0.035f * transition
-                            }
-                            .then(if (useTransitionBlur) Modifier.blur(7.dp * (1f - transition)) else Modifier),
-                        true,
-                    )
-                    renderPage(
-                        outgoingScreen!!,
-                        Modifier.fillMaxSize().graphicsLayer {
-                            translationX = widthPx * transition
-                            scaleX = 1f - 0.025f * transition
-                            scaleY = 1f - 0.025f * transition
-                            alpha = 1f - 0.08f * transition
-                        },
-                        true,
-                    )
-                }
-                else -> renderPage(displayedScreen, Modifier.fillMaxSize(), false)
+        Box(Modifier.fillMaxSize()) {
+            PageHost(
+                screen = st.screen,
+                depth = st.back.size,
+                backTarget = backTarget,
+                backEnabled = st.back.isNotEmpty() || st.screen is Screen.Working,
+                blur = useTransitionBlur,
+                onBack = { vm.back() },
+            ) { target, isBackground ->
+                MainScreenLayer(
+                    screen = target,
+                    st = st,
+                    dark = dark,
+                    modifier = Modifier,
+                    backgroundLayer = isBackground,
+                    vm = vm,
+                    launchPick = launchPick,
+                    launchExport = launchExport,
+                    launchExportAll = { pickTree.launch(null) },
+                    context = context,
+                    shareLog = ::shareLog,
+                )
             }
-
             if (st.message != null) {
                 Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp)) {
                     Banner(st.message, Palette.hd)
@@ -360,8 +179,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    private fun widthPxForBack(): Float = resources.displayMetrics.widthPixels.toFloat()
 
     private fun shareLog() {
         val log = DiagLog.read().ifEmpty { "暂无日志" }

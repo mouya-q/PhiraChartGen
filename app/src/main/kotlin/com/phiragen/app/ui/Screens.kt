@@ -77,7 +77,7 @@ fun HomeScreen(
                 PageTitle(
                     title = "PhiraChartGen",
                     subtitle = "本地音频分析与谱面生成",
-                    action = { PTextButton("›", onSettings) },
+                    action = { HeaderPill("设置", onSettings) },
                 )
 
                 val audio = st.audio
@@ -155,7 +155,7 @@ fun HomeScreen(
                     }
 
                     if (st.settings.ai.ready) {
-                        Banner("AI 增强已开启, 生成时会上传分段统计数据 (不含音频)", Palette.hd)
+                        Banner("AI 增强已开启, 生成时会上传按乐句统计的数据 (不含音频)", Palette.hd)
                     }
 
                     PButton(
@@ -202,13 +202,13 @@ private fun EmptyHome(st: UiState, dark: Boolean, onPick: () -> Unit, onResume: 
         }
     }
     if (st.hasSession) {
-        SurfaceCard(dark, Modifier.fillMaxWidth()) {
+        SurfaceCard(dark, Modifier.fillMaxWidth().pressable(onResume, pressedScale = 0.98f)) {
             Row(Modifier.padding(17.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Txt("继续上次的曲目", style = MiuixTheme.textStyles.body1)
                     Summary("复用已保存的分析, 无需重新解码")
                 }
-                PTextButton("›", onResume)
+                ChevronIcon(MiuixTheme.colorScheme.onSurfaceVariantSummary)
             }
         }
     }
@@ -233,7 +233,7 @@ fun WorkingScreen(st: UiState, dark: Boolean, onCancel: () -> Unit, onRetry: () 
                             Txt("处理失败", style = MiuixTheme.textStyles.title3, color = Palette.bad)
                             Txt(st.error, align = TextAlign.Center)
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PTextButton("›", onBack, Modifier.weight(1f))
+                                PButton("返回", onBack, Modifier.weight(1f), primary = false)
                                 PButton("重试", onRetry, Modifier.weight(1f))
                             }
                         } else {
@@ -277,7 +277,7 @@ fun ResultScreen(
     onFormat: (ChartFormat) -> Unit,
     onSettings: () -> Unit,
 ) {
-    PScaffold(topBar = { PTopBar("生成结果", onBack, actions = { PTextButton("›", onSettings) }) }) { pad ->
+    PScaffold(topBar = { PTopBar("生成结果", onBack, actions = { HeaderPill("设置", onSettings) }) }) { pad ->
         Box(Modifier.fillMaxSize()) {
             PageBackground(dark)
             Column(
@@ -298,7 +298,7 @@ fun ResultScreen(
                             ),
                         )
                         when (val ai = st.aiOutcome) {
-                            is AiOutcome.Applied -> Banner("已应用 AI 编排建议 (${ai.windowCount} 段)", Palette.ok)
+                            is AiOutcome.Applied -> Banner("已应用 AI 编排: ${ai.windowCount} 段建议, ${ai.styles} 处风格, ${ai.effects} 个特效", Palette.ok)
                             is AiOutcome.FellBack -> Banner("AI 增强未生效, 已使用离线结果: ${ai.reason}", Palette.warn)
                             else -> Unit
                         }
@@ -346,7 +346,7 @@ private fun ChartCard(
 ) {
     val color = diffColor(chart.profile.difficulty)
     val report = st.reports[index]
-    SurfaceCard(dark, Modifier.fillMaxWidth()) {
+    SurfaceCard(dark, Modifier.fillMaxWidth().pressable({ onPreview(index) }, pressedScale = 0.985f)) {
         Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(

@@ -20,11 +20,50 @@ jobs:
           python-version: "3.12"
       - run: python3 tools/validate_phira_pack.py samples/*.zip
 
+  native-engine:
+    name: Rust 原生引擎
+    runs-on: ubuntu-latest
+    # 原生引擎是可选模块: 构建失败不阻塞其他任务, 应用会自动使用 Kotlin 引擎
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/pcg-dsp
+      - name: 单元测试
+        run: cargo test --manifest-path native/pcg-dsp/Cargo.toml
+      - name: 构建主机库 (供 Kotlin 对照测试使用)
+        run: cargo build --release --manifest-path native/pcg-dsp/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-host-lib
+          path: native/pcg-dsp/target/release/libpcg_dsp.so
+      - name: 构建 Android 库
+        working-directory: native/pcg-dsp
+        run: |
+          cargo install cargo-ndk --locked
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o ../../app/src/main/jniLibs build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-android-libs
+          path: app/src/main/jniLibs
+
   core-tests:
     name: 核心模块单元测试
     runs-on: ubuntu-latest
+    needs: native-engine
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
+      # 有原生库时, Kotlin 对照测试会把两种实现的结果做比较
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: native-host-lib
+          path: native/pcg-dsp/target/release
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -42,9 +81,16 @@ jobs:
   build-apk:
     name: 构建 APK
     runs-on: ubuntu-latest
-    needs: core-tests
+    needs: [core-tests, native-engine]
+    if: ${{ !cancelled() && needs.core-tests.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
+      # 有原生库时打进 APK, 没有则只含 Kotlin 引擎
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: native-android-libs
+          path: app/src/main/jniLibs
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

@@ -8,6 +8,9 @@
 - 离线分析: 起音检测, BPM 估计, 第一拍对齐
 - 四档难度 EZ, HD, IN, AT, 含点击, 长按, 滑动, 拖动, 同时按键
 - 判定线编排参考真人谱: 稳定主线加装饰线动画, 高潮段拆线与旋转
+- 轨道选择由玩家谱训练的小模型完成, 左右分布与真人一致
+- AI 增强可以为每个乐句选择判定线风格, 密度与装饰特效
+- 可选的 Rust 原生分析引擎, 失败自动回退
 - 导出 RPE JSON, Phigros 官方 JSON, PEC 三种格式, 在界面中选择
 - 内置兼容性验证, 另附独立校验脚本
 - 谱面预览与试听
@@ -42,7 +45,8 @@
 | --- | --- |
 | [docs/BUILD.md](docs/BUILD.md) | 构建指南与云端 CI 说明 |
 | [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md) | 构建与验证状态, 含 CI 运行记录 |
-| [docs/CHART_STUDY.md](docs/CHART_STUDY.md) | 玩家谱研究: 真人如何写判定线动画与音符 |
+| [docs/CHART_STUDY.md](docs/CHART_STUDY.md) | 玩家谱研究: 真人如何写判定线动画与音符, 轨道模型与速度估计的验证 |
+| [native/pcg-dsp/README.md](native/pcg-dsp/README.md) | Rust 原生分析引擎 (可选) |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 用户手册 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构说明与决策记录 |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | Phira 兼容性验证方法与状态 |

@@ -126,6 +126,15 @@ fun SettingsScreen(
                 }
             }
 
+            Section("分析引擎") {
+                val nativeLoaded = remember { com.phiragen.core.audio.NativeDsp.isAvailable() }
+                PSwitchRow(
+                    "使用原生分析引擎",
+                    if (nativeLoaded) "已包含 Rust 引擎, 分析更快, 出错时自动使用 Kotlin 引擎" else "当前安装包不含原生库, 使用 Kotlin 引擎",
+                    s.nativeEngine && nativeLoaded,
+                ) { v -> if (nativeLoaded) onChange { it.copy(nativeEngine = v) } }
+            }
+
             Section("数据与权限") {
                 Column(Modifier.padding(16.dp)) {
                     Txt("权限说明", style = MiuixTheme.textStyles.body1)
@@ -140,7 +149,7 @@ fun SettingsScreen(
             }
 
             Section("关于") {
-                PSwitchRowLike("关于与声明", "版本, 隐私, 免责声明, 开源许可", onAbout)
+                NavRow("关于与声明", "版本, 隐私, 免责声明, 开源许可", onAbout)
             }
             }
         }
@@ -149,7 +158,7 @@ fun SettingsScreen(
     if (consentDialog) {
         ConfirmDialog(
             title = "AI 数据使用声明",
-            body = "启用后, 生成谱面时会向你填写的接口发送曲速, 时长, 以及按时间分段的能量和起音数量统计\n\n" +
+            body = "启用后, 生成谱面时会向你填写的接口发送曲速, 以及按乐句 (8 拍) 统计的相对能量和起音数量\n\n" +
                 "不会发送音频内容, 文件名, 曲名, 艺术家或任何个人信息\n\n" +
                 "请求由你配置的第三方服务处理, 其数据政策由服务方决定, 你可以随时在这里关闭",
             confirm = "同意并启用", cancel = "取消",
@@ -168,19 +177,5 @@ fun SettingsScreen(
             onConfirm = { clearDialog = false; onClearCache() },
             onDismiss = { clearDialog = false },
         )
-    }
-}
-
-@Composable
-private fun PSwitchRowLike(title: String, summary: String, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Txt(title, style = MiuixTheme.textStyles.body1)
-            Summary(summary)
-        }
-        PTextButton("›", onClick)
     }
 }

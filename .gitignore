@@ -8,3 +8,7 @@ keystore.properties
 *.iml
 .DS_Store
 captures/
+
+# Rust
+native/pcg-dsp/target/
+app/src/main/jniLibs/

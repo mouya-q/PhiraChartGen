@@ -42,7 +42,7 @@ fun AboutScreen(dark: Boolean, onBack: () -> Unit, onLicenses: () -> Unit, versi
                     Column(Modifier.padding(16.dp)) {
                         Summary("音频文件只在本机解码和分析, 不会上传")
                         Spacer(Modifier.height(6.dp))
-                        Summary("启用 AI 增强后, 仅上传曲速, 时长与分段统计数据, 不含音频, 文件名与个人信息")
+                        Summary("启用 AI 增强后, 仅上传曲速与按乐句统计的能量和起音数量, 不含音频, 文件名与个人信息")
                         Spacer(Modifier.height(6.dp))
                         Summary("没有账号, 没有统计, 没有广告, 诊断日志只保存在本机")
                     }
@@ -59,11 +59,7 @@ fun AboutScreen(dark: Boolean, onBack: () -> Unit, onLicenses: () -> Unit, versi
                     }
                 }
                 Section("开源许可") {
-                    Column(Modifier.padding(16.dp)) {
-                        Summary("本应用使用了以下开源项目")
-                        Spacer(Modifier.height(10.dp))
-                        PButton("查看许可证清单", onLicenses, Modifier.fillMaxWidth(), primary = false)
-                    }
+                    NavRow("第三方开源许可证", "本应用使用的开源项目与许可证", onLicenses)
                 }
             }
         }

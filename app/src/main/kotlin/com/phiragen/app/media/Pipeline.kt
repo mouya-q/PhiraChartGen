@@ -10,7 +10,7 @@ import com.phiragen.core.ai.AiOutcome
 import com.phiragen.core.audio.AnalysisCodec
 import com.phiragen.core.audio.AnalysisConfig
 import com.phiragen.core.audio.AnalysisResult
-import com.phiragen.core.audio.SpectrumStream
+import com.phiragen.core.audio.AnalyzerFactory
 import com.phiragen.core.audio.StreamResampler
 import com.phiragen.core.chart.Chart
 import com.phiragen.core.chart.ChartFormat
@@ -35,10 +35,10 @@ object Pipeline {
     private const val SESSION_BIN = "session.bin"
 
     /** 解码并分析, 全程在后台线程, 音频按块处理 */
-    suspend fun analyze(context: Context, info: AudioInfo, onProgress: (Float) -> Unit): AnalysisResult =
+    suspend fun analyze(context: Context, info: AudioInfo, useNative: Boolean = true, onProgress: (Float) -> Unit): AnalysisResult =
         withContext(Dispatchers.Default) {
             val job = coroutineContext[Job]
-            val spectrum = SpectrumStream()
+            val spectrum = AnalyzerFactory.create(useNative)
             var resampler: StreamResampler? = null
             var channels = 2
             var mono = FloatArray(8192)
@@ -64,7 +64,7 @@ object Pipeline {
             )
             resampler?.flush()
             val result = spectrum.finish()
-            DiagLog.i("analyze", "完成 耗时=${System.currentTimeMillis() - t0}ms 帧=${result.frameCount} bpm=${"%.1f".format(result.bpm)}")
+            DiagLog.i("analyze", "引擎=${spectrum.engine} 完成 耗时=${System.currentTimeMillis() - t0}ms 帧=${result.frameCount} bpm=${"%.1f".format(result.bpm)}")
             result
         }
 

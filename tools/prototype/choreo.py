@@ -48,6 +48,7 @@ def steady(tr, t0, t1, key, pulse):
     x, y, r = tr.x, tr.y, tr.rot
     rb = base_rot(r.value)
     x.to(t0 + 1, 0.0); x.hold(t1)
+    if abs(y.value - BASE_Y) > 1.0: y.to(t0 + 1.0, BASE_Y)
     amp = TILT[key]; D = DIP[key] * (1.25 if pulse else 1.0)
     stride = 1.0 if pulse else 2.0
     sgn = 1.0

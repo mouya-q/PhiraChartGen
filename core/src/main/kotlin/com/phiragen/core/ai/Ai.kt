@@ -2,7 +2,10 @@ package com.phiragen.core.ai
 
 import com.phiragen.core.audio.AnalysisConfig
 import com.phiragen.core.audio.AnalysisResult
+import com.phiragen.core.chart.EffectType
 import com.phiragen.core.chart.Guidance
+import com.phiragen.core.chart.PhraseCue
+import com.phiragen.core.chart.PhraseStyle
 import com.phiragen.core.chart.GuidanceWindow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -120,12 +123,13 @@ class AiClient(
         var useMaxCompletionTokens = false
         var sendTemperature = true
         var extraV1 = false
+        var jsonMode = false
     }
 
     /** 发送对话请求并返回助手文本, 对可重试错误做指数退避 */
-    fun chat(system: String, user: String, maxTokens: Int = 1200, requireText: Boolean = true): String {
+    fun chat(system: String, user: String, maxTokens: Int = 1200, requireText: Boolean = true, jsonMode: Boolean = false): String {
         config.validate()?.let { throw AiException(AiErrorKind.BAD_REQUEST, it) }
-        val quirks = Quirks()
+        val quirks = Quirks().also { it.jsonMode = jsonMode }
         var attempt = 0
         var adapted = 0
         while (true) {
@@ -157,6 +161,7 @@ class AiClient(
             put("model", config.model.trim())
             if (q.sendTemperature) put("temperature", 0.3)
             put(if (q.useMaxCompletionTokens) "max_completion_tokens" else "max_tokens", maxTokens)
+            if (q.jsonMode) put("response_format", buildJsonObject { put("type", "json_object") })
             put("messages", buildJsonArray {
                 add(buildJsonObject { put("role", "system"); put("content", system) })
                 add(buildJsonObject { put("role", "user"); put("content", user) })
@@ -204,6 +209,7 @@ class AiClient(
                 val d = detail.lowercase()
                 if (!q.useMaxCompletionTokens && d.contains("max_completion_tokens")) { q.useMaxCompletionTokens = true; throw AdaptRequest("max_tokens") }
                 if (q.sendTemperature && d.contains("temperature")) { q.sendTemperature = false; throw AdaptRequest("temperature") }
+                if (q.jsonMode && (d.contains("response_format") || d.contains("json_object") || d.contains("json mode"))) { q.jsonMode = false; throw AdaptRequest("response_format") }
                 throw AiException(AiErrorKind.BAD_REQUEST, "请求被拒绝 (${reply.code})" + suffix(detail))
             }
             in 400..499 -> throw AiException(AiErrorKind.BAD_REQUEST, "请求被拒绝 (${reply.code})" + suffix(detail))
@@ -251,79 +257,187 @@ class AiClient(
 }
 
 sealed class AiOutcome {
-    class Applied(val windowCount: Int) : AiOutcome()
+    class Applied(val windowCount: Int, val effects: Int = 0, val styles: Int = 0) : AiOutcome()
     class FellBack(val reason: String) : AiOutcome()
     object Disabled : AiOutcome()
 }
 
 /**
- * AI 增强: 只上传曲速, 时长和按时间分段的能量与起音密度统计, 不上传音频, 文件名或个人信息
- * 模型返回分段密度倾向, 由离线生成器套用, 任何失败都回退为纯离线结果
+ * AI 增强. 只上传曲速, 时长和按乐句 (8 拍) 统计的能量与起音数量, 不上传音频, 文件名或个人信息.
+ * 模型为每个乐句选择主线风格, 音符密度倍率与装饰特效, 由离线生成器套用, 任何失败都回退为纯离线结果
  */
 object AiEnhancer {
-    private const val SYSTEM_PROMPT =
-        "你是音游谱面编排助手. 根据给出的分段统计, 为每个时间段给出音符密度倍率. " +
-            "高潮段提高到 1.1 到 1.5, 过渡与安静段降到 0.4 到 0.9, 其余保持 1.0. " +
-            "只输出 JSON, 格式为 {\"windows\":[{\"start\":秒,\"end\":秒,\"density\":倍率}]}, 不要输出任何其他文字"
+    /** 提示词里的设计库来自对玩家谱的统计研究, 见 docs/CHART_STUDY.md */
+    internal val SYSTEM_PROMPT = """
+你是资深音游谱面设计师, 为 Phira 的 RPE 谱面编排判定线动画与音符密度.
+输入是整首歌按 8 拍一个乐句统计的数据: i 是乐句序号, e 是相对能量 (1.0 约为全曲高潮水平), o 是起音数量.
+你要为需要改变默认做法的乐句给出编排. 默认: 风格 STEADY, 密度 1.0, 自动特效.
 
-    fun buildSummary(a: AnalysisResult, segmentSec: Double = 4.0): String {
-        val rmsPeak = (a.rms.maxOrNull() ?: 1f).coerceAtLeast(1e-6f)
-        val segs = buildJsonArray {
-            var t = 0.0
-            while (t < a.durationSec) {
-                val f0 = a.frameAt(t)
-                val f1 = max(f0 + 1, a.frameAt(t + segmentSec))
-                var e = 0.0
-                var onsets = 0
-                for (f in f0 until minOf(f1, a.frameCount)) {
-                    e += a.rms[f]
-                    if (a.env[f] > 0.5f) onsets++
-                }
-                val mean = e / max(1, minOf(f1, a.frameCount) - f0)
-                val db = 20.0 * log10(mean / rmsPeak + 1e-9)
+设计库 (来自真人高难度谱的统计):
+- 真人谱的音符几乎都落在一条稳定的主线上, 视觉效果主要由不带音符的装饰线提供, 所以大多数乐句应保持 STEADY.
+- style 可选: STEADY (主线每 2 拍轻微倾斜回弹), PULSE (能量高时主线每拍下沉, 配合底鼓), SPLIT (拆成左右两条线, 仅高难度), SPIN (整体旋转, 仅高难度).
+- SPLIT 与 SPIN 是少见的大动作: 全曲不超过乐句总数的六分之一, 且两次之间至少隔 3 个乐句, 只用在最强的高潮段.
+- effects 可选: SWEEPERS (近竖直的细线每 2 拍从两侧扫入并随拍闪烁, 常用于开头和重复的高潮段), WHOOSH (能量骤升的段落开头成对对称扫线, 约 2 拍), ECHO (从主线向下扩散淡出的回声线, 用于鼓点密集的高潮段).
+- 安静段不加特效. 特效集中在开头, 能量骤升处与高潮段, 同一乐句最多 2 个.
+- density 是音符密度倍率, 范围 0.4 到 1.5: 安静与过渡段 0.5 到 0.9, 高潮段 1.1 到 1.4.
+- 只能使用以上名称, 不要发明新的.
+
+只输出一个 JSON 对象, 不要任何解释, 不要代码块标记. 格式:
+{"phrases":[{"i":0,"style":"STEADY","density":0.6,"effects":["SWEEPERS"]}]}
+字段都是可选的, 不需要改变的乐句不要列出.
+
+参考示例. 输入:
+{"bpm":150,"phrases":[{"i":0,"e":0.2,"o":3},{"i":1,"e":0.3,"o":6},{"i":2,"e":0.6,"o":14},{"i":3,"e":0.65,"o":16},{"i":4,"e":0.95,"o":30},{"i":5,"e":0.9,"o":28},{"i":6,"e":0.35,"o":8},{"i":7,"e":0.3,"o":7},{"i":8,"e":0.7,"o":18},{"i":9,"e":1.0,"o":34},{"i":10,"e":1.0,"o":36},{"i":11,"e":0.4,"o":9}]}
+输出:
+{"phrases":[{"i":0,"density":0.5,"effects":["SWEEPERS"]},{"i":1,"density":0.7},{"i":2,"density":0.9},{"i":3,"style":"PULSE"},{"i":4,"style":"PULSE","density":1.2,"effects":["WHOOSH","SWEEPERS"]},{"i":5,"style":"PULSE","density":1.3,"effects":["ECHO"]},{"i":6,"density":0.6},{"i":7,"density":0.6},{"i":8,"style":"PULSE","density":1.0},{"i":9,"style":"SPIN","density":1.3,"effects":["WHOOSH","ECHO"]},{"i":10,"style":"PULSE","density":1.4,"effects":["ECHO"]},{"i":11,"density":0.5}]}
+""".trimIndent()
+
+    private fun phraseStartSec(a: AnalysisResult, i: Int): Double {
+        val beat = a.beatSec
+        var phi = a.phase % beat
+        if (phi < 0.02) phi += beat
+        return phi + 8 * i * beat
+    }
+
+    fun phraseCount(a: AnalysisResult): Int {
+        val beat = a.beatSec
+        var n = 0
+        while (phraseStartSec(a, n) < a.durationSec) n++
+        return n.coerceAtLeast(1)
+    }
+
+    fun buildSummary(a: AnalysisResult): String {
+        val p90 = (com.phiragen.core.audio.Stats.percentile(a.rms, 90.0) + 1e-9).toFloat()
+        val peaks = com.phiragen.core.audio.PeakPicker.pick(a.env, 0.045, 0.12)
+        val n = phraseCount(a)
+        val phrases = buildJsonArray {
+            for (i in 0 until n) {
+                val s = phraseStartSec(a, i)
+                val f0 = a.frameAt(s)
+                val f1 = max(f0 + 1, minOf(a.frameCount, ((s + 8 * a.beatSec) * a.fps).toInt()))
+                var sum = 0.0
+                for (f in f0 until f1) sum += a.rms[f]
+                val e = (sum / (f1 - f0)) / p90
+                val o = peaks.count { it in f0 until f1 }
                 add(buildJsonObject {
-                    put("start", Math.round(t * 10) / 10.0)
-                    put("energyDb", Math.round(db * 10) / 10.0)
-                    put("onsets", onsets)
+                    put("i", i)
+                    put("e", Math.round(e * 100) / 100.0)
+                    put("o", o)
                 })
-                t += segmentSec
             }
         }
         return buildJsonObject {
             put("bpm", Math.round(a.bpm * 10) / 10.0)
-            put("durationSec", Math.round(a.durationSec))
-            put("segments", segs)
+            put("phrases", phrases)
         }.toString()
     }
 
-    fun parseGuidance(text: String, durationSec: Double): Guidance {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start < 0 || end <= start) throw AiException(AiErrorKind.FORMAT)
-        val root = try {
-            Json.parseToJsonElement(text.substring(start, end + 1)).jsonObject
-        } catch (e: Exception) {
-            throw AiException(AiErrorKind.FORMAT)
+    // ---------------- 解析
+
+    /** 去掉推理模型的思考标签与代码块标记 */
+    internal fun clean(text: String): String {
+        var t = text
+        t = Regex("<think>[\\s\\S]*?</think>", RegexOption.IGNORE_CASE).replace(t, "")
+        t = Regex("<thinking>[\\s\\S]*?</thinking>", RegexOption.IGNORE_CASE).replace(t, "")
+        return t.replace("```json", "```").replace("```JSON", "```")
+    }
+
+    /** 按括号配对找出所有顶层 JSON 对象, 识别字符串中的括号与转义 */
+    internal fun jsonObjects(text: String): List<String> {
+        val out = ArrayList<String>()
+        var depth = 0
+        var start = -1
+        var inString = false
+        var escape = false
+        for ((i, ch) in text.withIndex()) {
+            if (inString) {
+                if (escape) escape = false else if (ch == '\\') escape = true else if (ch == '"') inString = false
+                continue
+            }
+            when (ch) {
+                '"' -> if (depth > 0) inString = true
+                '{' -> { if (depth == 0) start = i; depth++ }
+                '}' -> if (depth > 0) {
+                    depth--
+                    if (depth == 0 && start >= 0) { out.add(text.substring(start, i + 1)); start = -1 }
+                }
+            }
         }
-        val arr = root["windows"] as? JsonArray ?: throw AiException(AiErrorKind.FORMAT)
-        val out = ArrayList<GuidanceWindow>()
-        for (el in arr.take(400)) {
+        return out
+    }
+
+    private fun styleOf(name: String?): PhraseStyle? = when (name?.trim()?.uppercase()) {
+        "STEADY", "CALM" -> PhraseStyle.STEADY
+        "PULSE", "BOUNCE" -> PhraseStyle.PULSE
+        "SPLIT" -> PhraseStyle.SPLIT
+        "SPIN" -> PhraseStyle.SPIN
+        else -> null
+    }
+
+    private fun effectOf(name: String?): EffectType? = when (name?.trim()?.uppercase()) {
+        "SWEEPERS", "SWEEP", "FLASH" -> EffectType.SWEEPERS
+        "WHOOSH", "BURST" -> EffectType.WHOOSH
+        "ECHO", "RIPPLE" -> EffectType.ECHO
+        else -> null
+    }
+
+    private fun num(o: JsonObject, vararg keys: String): Double? {
+        for (k in keys) (o[k] as? JsonPrimitive)?.doubleOrNull?.let { if (!it.isNaN()) return it }
+        return null
+    }
+
+    /** 解析模型回复. 兼容代码块, 前后说明文字, 以及旧格式 windows */
+    fun parseGuidance(text: String, a: AnalysisResult): Guidance {
+        val durationSec = a.durationSec
+        val total = phraseCount(a)
+        val cleaned = clean(text)
+        var root: JsonObject? = null
+        for (candidate in jsonObjects(cleaned)) {
+            val o = try { Json.parseToJsonElement(candidate).jsonObject } catch (e: Exception) { continue }
+            if (o.containsKey("phrases") || o.containsKey("windows") || o.containsKey("sections")) { root = o; break }
+        }
+        if (root == null) {
+            val snippet = cleaned.trim().replace('\n', ' ').take(60)
+            throw AiException(AiErrorKind.FORMAT, "返回内容无法解析, 模型回复开头: " + if (snippet.isEmpty()) "(空)" else snippet)
+        }
+        val windows = ArrayList<GuidanceWindow>()
+        val cues = HashMap<Int, PhraseCue>()
+        val list = (root["phrases"] ?: root["sections"]) as? JsonArray
+        for (el in (list ?: JsonArray(emptyList())).take(400)) {
             val o = el as? JsonObject ?: continue
-            val s = o["start"]?.jsonPrimitive?.doubleOrNull ?: continue
-            val e = o["end"]?.jsonPrimitive?.doubleOrNull ?: continue
-            val d = o["density"]?.jsonPrimitive?.doubleOrNull ?: continue
-            if (s.isNaN() || e.isNaN() || d.isNaN()) continue
-            if (e <= s || s < 0 || s > durationSec) continue
-            out.add(GuidanceWindow(s, minOf(e, durationSec), d.coerceIn(0.3, 1.6)))
+            val i = num(o, "i", "index", "phrase")?.toInt() ?: continue
+            if (i < 0 || i >= total) continue
+            val density = num(o, "density", "d")?.coerceIn(0.4, 1.5)
+            val style = styleOf((o["style"] as? JsonPrimitive)?.content)
+            val effArr = (o["effects"] ?: o["effect"]) as? JsonArray
+            val effects = effArr?.mapNotNull { effectOf((it as? JsonPrimitive)?.content) }?.take(2)?.toSet()
+            if (density == null && style == null && effects == null) continue
+            cues[i] = PhraseCue(density, style, effects)
+            if (density != null) windows.add(GuidanceWindow(phraseStartSec(a, i), minOf(phraseStartSec(a, i + 1), durationSec), density))
         }
-        if (out.isEmpty()) throw AiException(AiErrorKind.FORMAT, "没有可用的分段建议")
-        return Guidance(out.sortedBy { it.startSec })
+        // 旧格式: 直接给出时间窗口与密度
+        for (el in ((root["windows"] as? JsonArray) ?: JsonArray(emptyList())).take(400)) {
+            val o = el as? JsonObject ?: continue
+            val s = num(o, "start") ?: continue
+            val e = num(o, "end") ?: continue
+            val d = num(o, "density") ?: continue
+            if (e <= s || s < 0 || s > durationSec) continue
+            windows.add(GuidanceWindow(s, minOf(e, durationSec), d.coerceIn(0.3, 1.6)))
+        }
+        if (cues.isEmpty() && windows.isEmpty()) {
+            throw AiException(AiErrorKind.FORMAT, "模型没有给出可用的编排建议, 回复开头: " + cleaned.trim().replace('\n', ' ').take(60))
+        }
+        return Guidance(windows.sortedBy { it.startSec }, cues)
     }
 
     fun enhance(a: AnalysisResult, client: AiClient): Pair<Guidance, AiOutcome> = try {
-        val reply = client.chat(SYSTEM_PROMPT, buildSummary(a))
-        val g = parseGuidance(reply, a.durationSec)
-        g to AiOutcome.Applied(g.windows.size)
+        val reply = client.chat(SYSTEM_PROMPT, buildSummary(a), maxTokens = 3000, jsonMode = true)
+        val g = parseGuidance(reply, a)
+        g to AiOutcome.Applied(
+            windowCount = g.phrases.size.coerceAtLeast(g.windows.size),
+            effects = g.phrases.values.sumOf { it.effects?.size ?: 0 },
+            styles = g.phrases.values.count { it.style != null },
+        )
     } catch (e: AiException) {
         Guidance.NONE to AiOutcome.FellBack(e.message ?: e.kind.text)
     } catch (e: Exception) {

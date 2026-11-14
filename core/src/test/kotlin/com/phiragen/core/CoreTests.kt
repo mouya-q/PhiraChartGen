@@ -9,11 +9,14 @@ import com.phiragen.core.ai.AiOutcome
 import com.phiragen.core.ai.HttpReply
 import com.phiragen.core.ai.HttpTransport
 import com.phiragen.core.audio.AnalysisCodec
+import com.phiragen.core.audio.AnalyzerFactory
+import com.phiragen.core.audio.NativeDsp
 import com.phiragen.core.audio.Fft
 import com.phiragen.core.audio.StreamResampler
 import com.phiragen.core.chart.ChartFormat
 import com.phiragen.core.chart.ChartGenerator
 import com.phiragen.core.chart.GenerationOptions
+import com.phiragen.core.chart.LaneModel
 import com.phiragen.core.chart.ChartMeta
 import com.phiragen.core.chart.Difficulty
 import com.phiragen.core.chart.DifficultyProfile
@@ -71,6 +74,14 @@ class AnalysisTest {
     }
 
     @Test
+    fun tempoIsRecoveredAtOtherSpeeds() {
+        for (bpm in listOf(110.0, 150.0, 174.0)) {
+            val a = TestAudio.analyze(TestAudio.synth(bpm = bpm, phase = 0.2, durationSec = 50.0))
+            assertTrue(abs(a.bpm - bpm) < 0.8, "expected $bpm got ${a.bpm}")
+        }
+    }
+
+    @Test
     fun beatPhaseIsConsistentWithHalfBeatGrid() {
         val half = analysis.beatSec / 2
         var d = (analysis.phase - synth.phase) % half
@@ -87,6 +98,73 @@ class AnalysisTest {
         assertEquals(analysis.bpm, back.bpm)
         assertEquals(analysis.frameCount, back.frameCount)
         assertTrue(analysis.env.contentEquals(back.env))
+    }
+}
+
+class NativeParityTest {
+    /** 已构建 Rust 库时, 对同一段音频比较原生与 Kotlin 两种实现; 库不存在则跳过 */
+    @Test
+    fun nativeEngineMatchesKotlinEngine() {
+        if (!NativeDsp.isAvailable()) return
+        val synth = TestAudio.synth(bpm = 128.0, phase = 0.37, durationSec = 30.0)
+        val kotlinResult = TestAudio.analyze(synth)
+        val nativeStream = AnalyzerFactory.create(preferNative = true)
+        assertEquals("native", nativeStream.engine)
+        var off = 0
+        while (off < synth.samples.size) {
+            val len = minOf(4096, synth.samples.size - off)
+            nativeStream.push(synth.samples.copyOfRange(off, off + len), len)
+            off += len
+        }
+        val nativeResult = nativeStream.finish()
+        assertEquals(kotlinResult.frameCount, nativeResult.frameCount)
+        assertTrue(abs(kotlinResult.bpm - nativeResult.bpm) < 0.2, "bpm ${kotlinResult.bpm} vs ${nativeResult.bpm}")
+        val half = kotlinResult.beatSec / 2
+        var d = (kotlinResult.phase - nativeResult.phase) % half
+        if (d < 0) d += half
+        assertTrue(minOf(d, half - d) < 0.01, "phase ${kotlinResult.phase} vs ${nativeResult.phase}")
+        var maxDiff = 0f
+        for (i in 0 until kotlinResult.frameCount) maxDiff = maxOf(maxDiff, abs(kotlinResult.env[i] - nativeResult.env[i]))
+        assertTrue(maxDiff < 1e-3f, "env max diff $maxDiff")
+        assertEquals(kotlinResult.lowMag.size, nativeResult.lowMag.size)
+    }
+
+    @Test
+    fun factoryFallsBackToKotlinWhenNativeIsNotRequested() {
+        assertEquals("kotlin", AnalyzerFactory.create(preferNative = false).engine)
+    }
+}
+
+class LaneModelTest {
+    @Test
+    fun probabilitiesMatchTheTrainingScriptOutput() {
+        // 数值来自 Python 对同一参数的计算, 用于确认权重与归一化被正确移植
+        val f1 = doubleArrayOf(0.4963, 0.2011, 0.5094, 0.2895, 0.8697, 0.0, 0.6488, 0.8278, 0.1971, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        val e1 = doubleArrayOf(0.174881, 0.251549, 0.18495, 0.200719, 0.187901)
+        val p1 = LaneModel.probs(f1)
+        for (i in e1.indices) assertEquals(e1[i], p1[i], 2e-3)
+        val f2 = doubleArrayOf(0.3482, 0.4233, 0.2766, 0.3001, 0.9029, 0.0, 0.7014, 0.9255, 0.385, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        val e2 = doubleArrayOf(0.185717, 0.23235, 0.13878, 0.248493, 0.194659)
+        val p2 = LaneModel.probs(f2)
+        for (i in e2.indices) assertEquals(e2[i], p2[i], 2e-3)
+    }
+
+    @Test
+    fun modelIsLeftRightSymmetric() {
+        val f = doubleArrayOf(0.5, 0.3, 0.4, 0.3, 0.7, 0.2, 0.5, 0.9, 0.4, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+        val mirrored = f.copyOf()
+        for (k in 0 until 5) { mirrored[9 + k] = f[9 + 4 - k]; mirrored[14 + k] = f[14 + 4 - k] }
+        val a = LaneModel.probs(f)
+        val b = LaneModel.probs(mirrored)
+        for (k in 0 until 5) assertEquals(a[k], b[4 - k], 5e-3)
+    }
+
+    @Test
+    fun classMapKeepsProbabilityMass() {
+        for (lanes in listOf(DifficultyProfile.EZ.lanes, DifficultyProfile.HD.lanes, DifficultyProfile.IN.lanes)) {
+            val m = LaneModel.classMap(lanes)
+            for (row in m) assertEquals(1.0, row.sum(), 1e-9)
+        }
     }
 }
 
@@ -132,6 +210,18 @@ class GeneratorTest {
         val c = gen(Difficulty.EZ)
         assertTrue(c.notes.none { it.type == NoteType.FLICK || it.type == NoteType.DRAG })
         assertEquals(c.notes.size, c.notes.map { it.time }.toSet().size)
+    }
+
+    @Test
+    fun lanesAreUsedEvenlyLeftToRight() {
+        for (d in listOf(Difficulty.HD, Difficulty.IN, Difficulty.AT)) {
+            val c = gen(d)
+            val xs = c.notes.filter { it.line == 0 }.map { it.x }
+            val left = xs.count { it < -1.0 }
+            val right = xs.count { it > 1.0 }
+            val ratio = left.toDouble() / right.coerceAtLeast(1)
+            assertTrue(ratio in 0.7..1.43, "$d left=$left right=$right")
+        }
     }
 
     @Test
@@ -219,6 +309,34 @@ class GeneratorTest {
         val ez = gen(Difficulty.EZ).choreography
         assertEquals(1, ez.lineCount)
         assertTrue(ez.phrases.all { it.active == listOf(0) })
+    }
+
+    @Test
+    fun guidanceStyleAndEffectCuesAreHonored() {
+        val g = com.phiragen.core.chart.Guidance(
+            emptyList(),
+            mapOf(
+                0 to com.phiragen.core.chart.PhraseCue(effects = emptySet()),
+                1 to com.phiragen.core.chart.PhraseCue(style = com.phiragen.core.chart.PhraseStyle.SPIN),
+            ),
+        )
+        val c = ChartGenerator.generate(analysis, DifficultyProfile.AT, GenerationOptions(guidance = g))
+        assertEquals(com.phiragen.core.chart.PhraseStyle.SPIN, c.choreography.phrases[1].style)
+        // 第一个乐句指定了空特效列表, 因此不应再自动出现扫线
+        val firstBeat = c.choreography.phrases[0].startBeat
+        val decorInFirst = c.choreography.tracks.filter { !it.carriesNotes }
+            .count { t -> t.alpha.segs.any { it.start >= firstBeat - 0.1 && it.start < firstBeat + 8 && it.to > 1.0 } }
+        assertEquals(0, decorInFirst)
+    }
+
+    @Test
+    fun cuesCannotForceBigMovesOnEasyCharts() {
+        val g = com.phiragen.core.chart.Guidance(
+            emptyList(),
+            mapOf(1 to com.phiragen.core.chart.PhraseCue(style = com.phiragen.core.chart.PhraseStyle.SPLIT)),
+        )
+        val c = ChartGenerator.generate(analysis, DifficultyProfile.HD, GenerationOptions(guidance = g))
+        assertTrue(c.choreography.phrases.none { it.style == com.phiragen.core.chart.PhraseStyle.SPLIT || it.style == com.phiragen.core.chart.PhraseStyle.SPIN })
     }
 
     @Test
@@ -329,6 +447,49 @@ class AiTest {
         val t = Fake(mutableListOf({ HttpReply(503, "") }, { HttpReply(503, "") }, { HttpReply(503, "") }, { ok("late") }))
         assertFailsWith<AiException> { AiClient(cfg, t) {}.chat("s", "u") }
         assertEquals(3, t.calls)
+    }
+
+    @Test
+    fun parsesFencedJsonAfterProseWithStrayBraces() {
+        val reply = "好的, 我的方案 {仅供参考} 如下:\n```json\n" +
+            "{\"phrases\":[{\"i\":1,\"style\":\"spin\",\"density\":1.4,\"effects\":[\"WHOOSH\",\"ECHO\",\"SWEEPERS\"]}]}\n```\n希望有帮助"
+        val g = AiEnhancer.parseGuidance(reply, analysis)
+        val cue = g.phrases[1]!!
+        assertEquals(com.phiragen.core.chart.PhraseStyle.SPIN, cue.style)
+        assertEquals(1.4, cue.density!!, 1e-9)
+        assertEquals(2, cue.effects!!.size)
+    }
+
+    @Test
+    fun ignoresThinkingBlocksAndOutOfRangePhrases() {
+        val reply = "<think>先想想 {\"phrases\": 1}</think>{\"phrases\":[{\"i\":999,\"density\":1.2},{\"i\":2,\"density\":9}]}"
+        val g = AiEnhancer.parseGuidance(reply, analysis)
+        assertEquals(setOf(2), g.phrases.keys)
+        assertEquals(1.5, g.phrases[2]!!.density!!, 1e-9)
+    }
+
+    @Test
+    fun parseFailureShowsTheStartOfTheModelReply() {
+        val ex = assertFailsWith<AiException> { AiEnhancer.parseGuidance("抱歉, 我无法完成这个任务", analysis) }
+        assertTrue(ex.message!!.contains("抱歉"))
+    }
+
+    @Test
+    fun dropsJsonModeWhenServerRejectsIt() {
+        val err = HttpReply(400, """{"error":{"message":"response_format is not supported by this model"}}""")
+        val t = Fake(mutableListOf({ err }, { ok("{}") }))
+        AiClient(cfg, t) {}.chat("s", "u", jsonMode = true)
+        assertTrue(t.bodies[0].contains("response_format") && !t.bodies[1].contains("response_format"))
+    }
+
+    @Test
+    fun enhanceUsesRichSchemaEndToEnd() {
+        val t = Fake(mutableListOf({ ok("""{"phrases":[{"i":0,"style":"STEADY","density":0.5,"effects":["SWEEPERS"]},{"i":3,"style":"PULSE"}]}""") }))
+        val (g, outcome) = AiEnhancer.enhance(analysis, AiClient(cfg, t) {})
+        assertTrue(outcome is AiOutcome.Applied)
+        assertEquals(1, (outcome as AiOutcome.Applied).effects)
+        assertTrue(t.bodies[0].contains("response_format"))
+        assertTrue(g.densityAt(0.5) < 1.0)
     }
 
     @Test

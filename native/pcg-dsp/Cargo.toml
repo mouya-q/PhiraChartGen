@@ -1,0 +1,20 @@
+[package]
+name = "pcg-dsp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Phira 谱面生成器的原生音频分析引擎"
+
+[lib]
+name = "pcg_dsp"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# 只用到 JNI 的类型定义与函数表, 固定版本避免接口变动
+jni-sys = "=0.3.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
